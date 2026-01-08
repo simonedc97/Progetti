@@ -10,7 +10,6 @@ import hashlib
 st.set_page_config(page_title="Team Projects Planner", layout="wide")
 
 DATA_PATH = "data/planner.csv"
-USERS = ["Elena", "Giulia", "Simone", "Paolo"]
 
 COLUMNS = [
     "Area",
@@ -26,28 +25,12 @@ COLUMNS = [
 # -------------------------
 # SESSION STATE
 # -------------------------
-st.session_state.setdefault("user", None)
 st.session_state.setdefault("edit_mode", False)
 st.session_state.setdefault("add_project", False)
 st.session_state.setdefault("task_boxes", 1)
 st.session_state.setdefault("delete_mode", False)
 st.session_state.setdefault("confirm_delete_project", None)
 st.session_state.setdefault("confirm_delete_task", None)
-
-# ======================================================
-# 🔐 LOGIN – BOX CLICK
-# ======================================================
-if st.session_state.user is None:
-    st.markdown("<h1 style='text-align:center'>🔐 Login</h1>", unsafe_allow_html=True)
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    cols = st.columns(4)
-    for col, user in zip(cols, USERS):
-        with col:
-            if st.button(user, use_container_width=True):
-                st.session_state.user = user
-                st.rerun()
-    st.stop()
 
 # -------------------------
 # LOAD DATA
@@ -73,7 +56,6 @@ def area_color(area):
 col_title, col_actions = st.columns([6, 4])
 with col_title:
     st.title("📊 Team Projects Planner")
-    st.caption(f"Logged in as **{st.session_state.user}**")
 
 with col_actions:
     if st.button("✏️ Edit"):
@@ -107,7 +89,7 @@ if st.session_state.add_project:
     col1, col2, col3 = st.columns(3)
     if col1.button("➕ Add task"):
         st.session_state.task_boxes += 1
-        st.rerun()
+        st.experimental_rerun()
 
     if col2.button("Create project"):
         for t, o, p, pr, d in tasks:
@@ -125,12 +107,12 @@ if st.session_state.add_project:
         os.makedirs("data", exist_ok=True)
         df.to_csv(DATA_PATH, index=False)
         st.session_state.add_project = False
-        st.rerun()
+        st.experimental_rerun()
 
     if col3.button("Cancel"):
         st.session_state.add_project = False
         st.session_state.task_boxes = 1
-        st.rerun()
+        st.experimental_rerun()
 
 # ======================================================
 # 📁 PROJECT VIEW
@@ -228,7 +210,7 @@ if not st.session_state.add_project:
                 col1, col2, col3 = st.columns(3)
                 if col1.button("➕ Add task", key=f"add_{project}"):
                     st.session_state[add_key] += 1
-                    st.rerun()
+                    st.experimental_rerun()
 
                 if col2.button("Save changes", key=f"save_{project}"):
                     df.loc[df["Project"] == project, ["Area", "Project"]] = [new_area, new_name]
@@ -250,48 +232,47 @@ if not st.session_state.add_project:
 
                     df.to_csv(DATA_PATH, index=False)
                     st.session_state.edit_mode = False
-                    st.rerun()
+                    st.experimental_rerun()
 
                 if col3.button("Cancel", key=f"cancel_{project}"):
                     st.session_state.edit_mode = False
                     st.session_state[add_key] = 1
-                    st.rerun()
+                    st.experimental_rerun()
 
 # ======================================================
 # CONFIRM DELETE PROJECT
 # ======================================================
-if st.session_state.confirm_delete_project:
+if st.session_state.confirm_delete_project is not None:
     project = st.session_state.confirm_delete_project
     st.warning(f"Are you sure you want to delete the project **{project}**? This cannot be undone!")
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("Yes, delete project"):
-            df = df[df["Project"] != project]
+        if st.button("Yes, delete project", key=f"confirm_del_proj_{project}"):
+            df = df[df["Project"] != project].reset_index(drop=True)
             df.to_csv(DATA_PATH, index=False)
             st.success(f"Project '{project}' deleted")
             st.session_state.confirm_delete_project = None
             st.experimental_rerun()
     with col2:
-        if st.button("Cancel"):
+        if st.button("Cancel", key=f"cancel_del_proj_{project}"):
             st.session_state.confirm_delete_project = None
-            st.experimental_rerun()
 
 # ======================================================
 # CONFIRM DELETE TASK
 # ======================================================
 if st.session_state.confirm_delete_task is not None:
     idx = st.session_state.confirm_delete_task
-    task_name = df.loc[idx, "Task"]
-    st.warning(f"Are you sure you want to delete the task **{task_name}**? This cannot be undone!")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Yes, delete task"):
-            df = df.drop(idx).reset_index(drop=True)
-            df.to_csv(DATA_PATH, index=False)
-            st.success(f"Task '{task_name}' deleted")
-            st.session_state.confirm_delete_task = None
-            st.experimental_rerun()
-    with col2:
-        if st.button("Cancel"):
-            st.session_state.confirm_delete_task = None
-            st.experimental_rerun()
+    if idx in df.index:
+        task_name = df.loc[idx, "Task"]
+        st.warning(f"Are you sure you want to delete the task **{task_name}**? This cannot be undone!")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Yes, delete task", key=f"confirm_del_task_{idx}"):
+                df = df.drop(idx).reset_index(drop=True)
+                df.to_csv(DATA_PATH, index=False)
+                st.success(f"Task '{task_name}' deleted")
+                st.session_state.confirm_delete_task = None
+                st.experimental_rerun()
+        with col2:
+            if st.button("Cancel", key=f"cancel_del_task_{idx}"):
+                st.session_state.confirm_delete_task = None
