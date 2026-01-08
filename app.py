@@ -1,369 +1,241 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, datetime, timedelta
 import os
-import hashlib
+import calendar
 
-# -------------------------
+# =========================
 # CONFIG
-# -------------------------
-st.set_page_config(page_title="Team Projects Planner", layout="wide")
+# =========================
+st.set_page_config(page_title="Team Planner", layout="wide")
 
 DATA_PATH = "data/planner.csv"
+EOM_PATH = "data/eom_activities.csv"
 
-COLUMNS = [
-    "Area",
-    "Project",
-    "Task",
-    "Owner",
-    "Progress",
-    "Priority",
-    "Release Date",
-    "Due Date"
+PROJECT_COLUMNS = [
+    "Area", "Project", "Task", "Owner",
+    "Progress", "Priority", "Release Date", "Due Date"
 ]
 
-# -------------------------
+# =========================
 # SESSION STATE
-# -------------------------
-if "edit_mode" not in st.session_state:
-    st.session_state.edit_mode = False
-if "add_project" not in st.session_state:
-    st.session_state.add_project = False
-if "task_boxes" not in st.session_state:
-    st.session_state.task_boxes = 1
-if "delete_mode" not in st.session_state:
-    st.session_state.delete_mode = False
-if "confirm_delete_project" not in st.session_state:
-    st.session_state.confirm_delete_project = None
-if "confirm_delete_task" not in st.session_state:
-    st.session_state.confirm_delete_task = None
+# =========================
+st.session_state.setdefault("section", "Projects")
+st.session_state.setdefault("edit_mode", False)
+st.session_state.setdefault("add_project", False)
+st.session_state.setdefault("task_boxes", 1)
+st.session_state.setdefault("delete_mode", False)
+st.session_state.setdefault("confirm_delete_project", None)
+st.session_state.setdefault("confirm_delete_task", None)
 
-# -------------------------
-# LOAD DATA
-# -------------------------
-def load_data():
-    if os.path.exists(DATA_PATH):
-        df = pd.read_csv(DATA_PATH, parse_dates=["Release Date", "Due Date"])
-        df["Owner"] = df["Owner"].fillna("")
-        return df
-    else:
-        return pd.DataFrame(columns=COLUMNS)
-
-def save_data(df):
-    os.makedirs("data", exist_ok=True)
-    df.to_csv(DATA_PATH, index=False)
-
-df = load_data()
-
-# -------------------------
+# =========================
 # HELPERS
-# -------------------------
+# =========================
 progress_values = ["Not started", "In progress", "Completed"]
 progress_score = {"Not started": 0, "In progress": 0.5, "Completed": 1}
 
-def area_color(area):
-    h = int(hashlib.md5(area.encode()).hexdigest(), 16)
-    return f"#{h % 0xFFFFFF:06x}"
+def save_csv(df, path):
+    os.makedirs("data", exist_ok=True)
+    df.to_csv(path, index=False)
 
-# -------------------------
-# HEADER
-# -------------------------
-col_title, col_actions = st.columns([6, 4])
-with col_title:
-    st.title("📊 Team Projects Planner")
+def load_csv(path, columns):
+    if os.path.exists(path):
+        return pd.read_csv(path, parse_dates=True)
+    return pd.DataFrame(columns=columns)
 
-    # Last Update
-    if len(df) > 0:
-        last_update = df["Release Date"].max()
-        if not pd.isna(last_update):
-            if isinstance(last_update, str):
-                last_update = pd.to_datetime(last_update)
+def last_working_day(year, month):
+    last_day = date(year, month, calendar.monthrange(year, month)[1])
+    while last_day.weekday() >= 5:  # 5=Sat, 6=Sun
+        last_day -= timedelta(days=1)
+    return last_day
+
+# =========================
+# LOAD DATA
+# =========================
+df = load_csv(DATA_PATH, PROJECT_COLUMNS)
+df["Owner"] = df.get("Owner", "").fillna("")
+
+eom_df = load_csv(EOM_PATH, [])
+
+# =========================
+# HEADER + NAVIGATION
+# =========================
+st.title("🗂️ Team Planner")
+
+nav1, nav2 = st.columns(2)
+with nav1:
+    if st.button("📊 Projects Planner", use_container_width=True):
+        st.session_state.section = "Projects"
+with nav2:
+    if st.button("📅 End of Month Activities", use_container_width=True):
+        st.session_state.section = "EOM"
+
+st.divider()
+
+# ======================================================
+# 📊 PROJECTS PLANNER (SEZIONE 1)
+# ======================================================
+if st.session_state.section == "Projects":
+
+    col_title, col_actions = st.columns([6, 4])
+    with col_title:
+        st.subheader("📊 Projects Planner")
+        if len(df) > 0 and "Release Date" in df:
+            last_update = pd.to_datetime(df["Release Date"]).max()
             st.caption(f"🕒 Last update: {last_update.strftime('%d/%m/%Y %H:%M')}")
-    else:
-        st.caption("🕒 Last update: —")
 
-with col_actions:
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("✏️ Edit"):
+    with col_actions:
+        c1, c2, c3 = st.columns(3)
+        if c1.button("✏️ Edit"):
             st.session_state.edit_mode = not st.session_state.edit_mode
             st.rerun()
-    with col2:
-        if st.button("➕ Project"):
+        if c2.button("➕ Project"):
             st.session_state.add_project = True
             st.session_state.task_boxes = 1
             st.rerun()
-    with col3:
-        if st.button("➖ Delete"):
+        if c3.button("➖ Delete"):
             st.session_state.delete_mode = not st.session_state.delete_mode
             st.rerun()
 
-# ======================================================
-# ➕ ADD PROJECT
-# ======================================================
-if st.session_state.add_project:
-    st.subheader("➕ New Project")
+    # ➕ ADD PROJECT
+    if st.session_state.add_project:
+        st.subheader("➕ New Project")
+        area = st.text_input("Area")
+        project = st.text_input("Project name")
 
-    area = st.text_input("Area")
-    project = st.text_input("Project name")
-
-    tasks = []
-    for i in range(st.session_state.task_boxes):
-        with st.container():
+        tasks = []
+        for i in range(st.session_state.task_boxes):
             st.markdown(f"**Task {i+1}**")
-            t = st.text_input("Task", key=f"new_task_{i}")
-            o = st.text_input("Owner (optional)", key=f"new_owner_{i}")
-            p = st.selectbox("Status", progress_values, key=f"new_prog_{i}")
-            pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"new_prio_{i}")
-            d = st.date_input("Due Date", value=date.today(), key=f"new_due_{i}")
+            t = st.text_input("Task", key=f"t{i}")
+            o = st.text_input("Owner", key=f"o{i}")
+            p = st.selectbox("Status", progress_values, key=f"p{i}")
+            pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"pr{i}")
+            d = st.date_input("Due Date", key=f"d{i}")
             if t:
                 tasks.append((t, o, p, pr, d))
             st.divider()
 
-    col1, col2, col3 = st.columns(3)
-    if col1.button("➕ Add task"):
-        st.session_state.task_boxes += 1
-        st.rerun()
-
-    if col2.button("Create project"):
-        if not area or not project:
-            st.error("Area and Project name are required!")
-        elif not tasks:
-            st.error("Add at least one task!")
-        else:
-            new_rows = []
-            for t, o, p, pr, d in tasks:
-                new_rows.append({
-                    "Area": area,
-                    "Project": project,
-                    "Task": t,
-                    "Owner": o,
-                    "Progress": p,
-                    "Priority": pr,
-                    "Release Date": pd.Timestamp.now(),
-                    "Due Date": pd.Timestamp(d)
-                })
-            
-            df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-            save_data(df)
-            st.session_state.add_project = False
-            st.session_state.task_boxes = 1
-            st.success(f"Project '{project}' created successfully!")
+        c1, c2, c3 = st.columns(3)
+        if c1.button("➕ Add task"):
+            st.session_state.task_boxes += 1
             st.rerun()
 
-    if col3.button("Cancel"):
-        st.session_state.add_project = False
-        st.session_state.task_boxes = 1
-        st.rerun()
+        if c2.button("Create project"):
+            for t, o, p, pr, d in tasks:
+                df.loc[len(df)] = [
+                    area, project, t, o, p, pr,
+                    datetime.now(), d
+                ]
+            save_csv(df, DATA_PATH)
+            st.session_state.add_project = False
+            st.rerun()
 
-# ======================================================
-# CONFIRM DELETE PROJECT
-# ======================================================
-if st.session_state.confirm_delete_project is not None:
-    project = st.session_state.confirm_delete_project
-    st.warning(f"⚠️ Are you sure you want to delete the project **{project}**? This cannot be undone!")
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("✅ Yes, delete project", key=f"confirm_del_proj_{project}", type="primary"):
-            df = df[df["Project"] != project].reset_index(drop=True)
-            save_data(df)
-            st.success(f"Project '{project}' deleted")
+        if c3.button("Cancel"):
+            st.session_state.add_project = False
+            st.rerun()
+
+    # 📁 PROJECT VIEW
+    for project, proj_df in df.groupby("Project"):
+        completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
+
+        cols = st.columns([9, 1]) if st.session_state.delete_mode else [st.container()]
+        with cols[0]:
+            exp = st.expander(f"📁 {project} — {completion}%", expanded=True)
+
+        if st.session_state.delete_mode:
+            with cols[1]:
+                if st.button("🗑️", key=f"del_proj_{project}"):
+                    st.session_state.confirm_delete_project = project
+                    st.rerun()
+
+        with exp:
+            st.progress(completion / 100)
+
+            for idx, r in proj_df.iterrows():
+                c_task, c_del = st.columns([10, 1])
+                with c_task:
+                    st.markdown(f"**{r['Task']}**")
+                    st.write(f"👤 {r['Owner'] or '—'} | 🎯 {r['Priority']} | 📅 {r['Due Date']}")
+                    status = st.radio(
+                        "Status",
+                        progress_values,
+                        index=progress_values.index(r["Progress"]),
+                        horizontal=True,
+                        key=f"s_{idx}"
+                    )
+                    if status != r["Progress"]:
+                        df.loc[idx, "Progress"] = status
+                        df.loc[idx, "Release Date"] = datetime.now()
+                        save_csv(df, DATA_PATH)
+                        st.rerun()
+
+                with c_del:
+                    if st.button("🗑️", key=f"del_task_{idx}"):
+                        st.session_state.confirm_delete_task = idx
+                        st.rerun()
+                st.divider()
+
+    # CONFIRM DELETE
+    if st.session_state.confirm_delete_project:
+        p = st.session_state.confirm_delete_project
+        st.warning(f"Delete project **{p}**?")
+        if st.button("✅ Confirm"):
+            df = df[df["Project"] != p]
+            save_csv(df, DATA_PATH)
             st.session_state.confirm_delete_project = None
             st.session_state.delete_mode = False
             st.rerun()
-    with col2:
-        if st.button("❌ Cancel", key=f"cancel_del_proj_{project}"):
+        if st.button("❌ Cancel"):
             st.session_state.confirm_delete_project = None
+
+    if st.session_state.confirm_delete_task is not None:
+        st.warning("Delete task?")
+        if st.button("✅ Confirm"):
+            df = df.drop(st.session_state.confirm_delete_task)
+            save_csv(df, DATA_PATH)
+            st.session_state.confirm_delete_task = None
             st.rerun()
-    st.stop()
+        if st.button("❌ Cancel"):
+            st.session_state.confirm_delete_task = None
 
 # ======================================================
-# CONFIRM DELETE TASK
+# 📅 END OF MONTH ACTIVITIES (SEZIONE 2)
 # ======================================================
-if st.session_state.confirm_delete_task is not None:
-    project_name, task_name = st.session_state.confirm_delete_task
-    mask = (df["Project"] == project_name) & (df["Task"] == task_name)
-    
-    if mask.any():
-        st.warning(f"⚠️ Are you sure you want to delete the task **{task_name}**? This cannot be undone!")
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("✅ Yes, delete task", key=f"confirm_del_task_{task_name}", type="primary"):
-                df = df[~mask].reset_index(drop=True)
-                save_data(df)
-                st.success(f"Task '{task_name}' deleted")
-                st.session_state.confirm_delete_task = None
-                st.rerun()
-        with col2:
-            if st.button("❌ Cancel", key=f"cancel_del_task_{task_name}"):
-                st.session_state.confirm_delete_task = None
-                st.rerun()
-        st.stop()
+if st.session_state.section == "EOM":
 
-# ======================================================
-# 📁 PROJECT VIEW
-# ======================================================
-if not st.session_state.add_project and len(df) > 0:
-    for project, proj_df in df.groupby("Project"):
-        completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
-        area = proj_df["Area"].iloc[0]
+    st.subheader("📅 End of Month Activities")
 
-        # HEADER PROGETTO CON DELETE MODE
-        header_text = f"📁 {project} — {completion}%"
-        if st.session_state.delete_mode:
-            cols = st.columns([8, 1])
-            with cols[0]:
-                expand = st.expander(header_text, expanded=True)
-            with cols[1]:
-                if st.button("🗑️", key=f"delete_proj_{project}"):
-                    st.session_state.confirm_delete_project = project
-                    st.rerun()
-        else:
-            expand = st.expander(header_text, expanded=True)
+    # Calcolo colonne (fine mese lavorativo)
+    today = date.today()
+    months = [(today.year, today.month + i) for i in range(0, 6)]
+    months = [(y, m if m <= 12 else m - 12) for y, m in months]
 
-        with expand:
-            st.progress(completion / 100)
+    eom_dates = [last_working_day(y, m) for y, m in months]
+    col_names = [d.strftime("%d %B %Y") for d in eom_dates]
 
-            # TASK VIEW
-            if not st.session_state.edit_mode:
-                for idx, r in proj_df.iterrows():
-                    cols = st.columns([10, 1])
-                    with cols[0]:
-                        st.markdown(f"**{r['Task']}**")
-                        st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
-                        st.write(f"🎯 Priority: {r['Priority']} | 📅 Due: {r['Due Date'].date()}")
+    # Init dataframe
+    if eom_df.empty:
+        eom_df["Activity"] = []
 
-                        # Radio per selezionare lo stato
-                        current_status = r["Progress"]
-                        status = st.radio(
-                            "Status",
-                            options=progress_values,
-                            index=progress_values.index(current_status),
-                            key=f"status_radio_{project}_{r['Task']}_{idx}",
-                            horizontal=True
-                        )
-                        
-                        # Aggiorna lo stato se cambiato
-                        if status != current_status:
-                            df.loc[idx, "Progress"] = status
-                            df.loc[idx, "Release Date"] = pd.Timestamp.now()  # aggiorna Release Date
-                            save_data(df)
-                            st.rerun()
+    for c in col_names:
+        if c not in eom_df.columns:
+            eom_df[c] = False
 
-                    # Delete task icon
-                    with cols[1]:
-                        if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
-                            st.session_state.confirm_delete_task = (project, r['Task'])
-                            st.rerun()
-                    
-                    st.divider()
+    # ADD ACTIVITY
+    new_act = st.text_input("➕ New activity")
+    if st.button("Add activity") and new_act:
+        row = {"Activity": new_act}
+        for c in col_names:
+            row[c] = False
+        eom_df = pd.concat([eom_df, pd.DataFrame([row])], ignore_index=True)
+        save_csv(eom_df, EOM_PATH)
+        st.rerun()
 
-            # ==================================================
-            # ✏️ EDIT PROJECT
-            # ==================================================
-            if st.session_state.edit_mode:
-                st.markdown("### ✏️ Edit project")
-                new_area = st.text_input("Area", area, key=f"ea_{project}")
-                new_name = st.text_input("Project name", project, key=f"ep_{project}")
+    # TABLE
+    edited = st.data_editor(
+        eom_df,
+        use_container_width=True,
+        num_rows="fixed"
+    )
 
-                st.markdown("### Edit existing tasks")
-                updated_rows = []
-
-                for idx, row in proj_df.iterrows():
-                    with st.container():
-                        st.markdown(f"**Task #{idx}**")
-                        t = st.text_input("Task", row["Task"], key=f"t_{idx}")
-                        o = st.text_input("Owner (optional)", row["Owner"] if row["Owner"] else "", key=f"o_{idx}")
-                        p = st.selectbox(
-                            "Status",
-                            progress_values,
-                            index=progress_values.index(row["Progress"]),
-                            key=f"p_{idx}"
-                        )
-                        pr = st.selectbox(
-                            "Priority",
-                            ["Low", "Important", "Urgent"],
-                            index=["Low", "Important", "Urgent"].index(row["Priority"]),
-                            key=f"pr_{idx}"
-                        )
-                        d = st.date_input("Due Date", row["Due Date"], key=f"d_{idx}")
-
-                        updated_rows.append((idx, t, o, p, pr, d))
-                        st.divider()
-
-                st.markdown("### ➕ Add new tasks")
-                add_key = f"add_boxes_{project}"
-                if add_key not in st.session_state:
-                    st.session_state[add_key] = 1
-                    
-                new_tasks = []
-
-                for i in range(st.session_state[add_key]):
-                    with st.container():
-                        st.markdown(f"**New Task {i+1}**")
-                        t = st.text_input("Task", key=f"nt_{project}_{i}")
-                        o = st.text_input("Owner (optional)", key=f"no_{project}_{i}")
-                        p = st.selectbox("Status", progress_values, key=f"np_{project}_{i}")
-                        pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_{project}_{i}")
-                        d = st.date_input("Due Date", value=date.today(), key=f"nd_{project}_{i}")
-                        if t:
-                            new_tasks.append((t, o, p, pr, d))
-                        st.divider()
-
-                col1, col2, col3 = st.columns(3)
-                if col1.button("➕ Add task", key=f"add_{project}"):
-                    st.session_state[add_key] += 1
-                    st.rerun()
-
-                if col2.button("💾 Save changes", key=f"save_{project}", type="primary"):
-                    # Aggiorna area e nome progetto
-                    df.loc[df["Project"] == project, "Area"] = new_area
-                    df.loc[df["Project"] == project, "Project"] = new_name
-
-                    # Aggiorna task esistenti
-                    for idx, t, o, p, pr, d in updated_rows:
-                        df.loc[idx, "Task"] = t
-                        df.loc[idx, "Owner"] = o
-                        df.loc[idx, "Progress"] = p
-                        df.loc[idx, "Priority"] = pr
-                        df.loc[idx, "Due Date"] = pd.Timestamp(d)
-                        df.loc[idx, "Release Date"] = pd.Timestamp.now()  # aggiorna Release Date
-
-                    # Aggiungi nuovi task
-                    new_rows = []
-                    for t, o, p, pr, d in new_tasks:
-                        new_rows.append({
-                            "Area": new_area,
-                            "Project": new_name,
-                            "Task": t,
-                            "Owner": o,
-                            "Progress": p,
-                            "Priority": pr,
-                            "Release Date": pd.Timestamp.now(),
-                            "Due Date": pd.Timestamp(d)
-                        })
-                    
-                    if new_rows:
-                        df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-
-                    save_data(df)
-                    st.session_state.edit_mode = False
-                    if add_key in st.session_state:
-                        st.session_state[add_key] = 1
-                    st.success("Changes saved successfully!")
-                    st.rerun()
-
-                if col3.button("❌ Cancel", key=f"cancel_{project}"):
-                    st.session_state.edit_mode = False
-                    if add_key in st.session_state:
-                        st.session_state[add_key] = 1
-                    st.rerun()
-
-elif not st.session_state.add_project and len(df) == 0:
-    st.info("📝 No projects yet. Click '➕ Project' to create your first project!")
-
-# -------------------------
-# FOOTER
-# -------------------------
-st.divider()
-st.caption(f"Total projects: {df['Project'].nunique() if len(df) > 0 else 0} | Total tasks: {len(df)}")
+    save_csv(edited, EOM_PATH)
