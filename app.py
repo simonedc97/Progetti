@@ -422,21 +422,22 @@ if st.session_state.section == "Projects":
     # 📁 PROJECT VIEW
     # ======================================================
     if not st.session_state.add_project and len(df) > 0:
-        # Sort by Order column
-        df_sorted = df.sort_values('Order').reset_index(drop=True)
-        
         # Separa progetti In Progress e Completed
         in_progress_projects = []
         completed_projects = []
         
-        for project in df_sorted["Project"].unique():
-            proj_df = df_sorted[df_sorted["Project"] == project]
+        for project in df["Project"].unique():
+            proj_df = df[df["Project"] == project]
             completion = proj_df["Progress"].map(progress_score).mean()
             
             if completion == 1.0:
                 completed_projects.append(project)
             else:
                 in_progress_projects.append(project)
+        
+        # Ordina progetti alfabeticamente
+        in_progress_projects.sort()
+        completed_projects.sort()
         
         # ===== IN PROGRESS SECTION =====
         if in_progress_projects:
@@ -445,64 +446,32 @@ if st.session_state.section == "Projects":
             # Raggruppa per Area
             in_progress_by_area = {}
             for project in in_progress_projects:
-                area = df_sorted[df_sorted["Project"] == project]["Area"].iloc[0]
+                area = df[df["Project"] == project]["Area"].iloc[0]
                 if area not in in_progress_by_area:
                     in_progress_by_area[area] = []
                 in_progress_by_area[area].append(project)
             
-            # Ordina aree alfabeticamente
+            # Ordina aree alfabeticamente e progetti all'interno
             for area in sorted(in_progress_by_area.keys()):
                 st.markdown(f"#### 🏢 {area}")
                 
-                for project in in_progress_by_area[area]:
-                    proj_df = df_sorted[df_sorted["Project"] == project]
+                for project in sorted(in_progress_by_area[area]):
+                    proj_df = df[df["Project"] == project]
                     completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
-                    
-                    # Move Up/Down buttons
-                    header_cols = st.columns([0.5, 0.5, 8, 1])
-                    
-                    with header_cols[0]:
-                        # Get project index in the full sorted list
-                        project_indices = df_sorted[df_sorted["Project"] == project].index.tolist()
-                        if project_indices and project_indices[0] > 0:
-                            if st.button("⬆️", key=f"up_{project}"):
-                                # Swap order with previous project
-                                current_order = df_sorted.loc[project_indices[0], "Order"]
-                                prev_idx = project_indices[0] - 1
-                                prev_order = df_sorted.loc[prev_idx, "Order"]
-                                df.loc[df["Project"] == project, "Order"] = prev_order
-                                prev_project = df_sorted.loc[prev_idx, "Project"]
-                                df.loc[df["Project"] == prev_project, "Order"] = current_order
-                                save_csv(df, DATA_PATH)
-                                st.rerun()
-                    
-                    with header_cols[1]:
-                        if project_indices and project_indices[-1] < len(df_sorted) - 1:
-                            if st.button("⬇️", key=f"down_{project}"):
-                                # Swap order with next project
-                                current_order = df_sorted.loc[project_indices[0], "Order"]
-                                next_idx = project_indices[-1] + 1
-                                next_order = df_sorted.loc[next_idx, "Order"]
-                                df.loc[df["Project"] == project, "Order"] = next_order
-                                next_project = df_sorted.loc[next_idx, "Project"]
-                                df.loc[df["Project"] == next_project, "Order"] = current_order
-                                save_csv(df, DATA_PATH)
-                                st.rerun()
                     
                     # Header del progetto
                     header_text = f"📁 {project} — {completion}%"
                     
-                    with header_cols[2]:
-                        if st.session_state.delete_mode:
-                            cols = st.columns([8, 1])
-                            with cols[0]:
-                                expand = st.expander(header_text, expanded=False)
-                            with cols[1]:
-                                if st.button("🗑️", key=f"delete_proj_{project}"):
-                                    st.session_state.confirm_delete_project = project
-                                    st.rerun()
-                        else:
+                    if st.session_state.delete_mode:
+                        cols = st.columns([8, 1])
+                        with cols[0]:
                             expand = st.expander(header_text, expanded=False)
+                        with cols[1]:
+                            if st.button("🗑️", key=f"delete_proj_{project}"):
+                                st.session_state.confirm_delete_project = project
+                                st.rerun()
+                    else:
+                        expand = st.expander(header_text, expanded=False)
                     
                     with expand:
                         st.progress(completion / 100)
@@ -688,17 +657,17 @@ if st.session_state.section == "Projects":
             # Raggruppa per Area
             completed_by_area = {}
             for project in completed_projects:
-                area = df_sorted[df_sorted["Project"] == project]["Area"].iloc[0]
+                area = df[df["Project"] == project]["Area"].iloc[0]
                 if area not in completed_by_area:
                     completed_by_area[area] = []
                 completed_by_area[area].append(project)
             
-            # Ordina aree alfabeticamente
+            # Ordina aree alfabeticamente e progetti all'interno
             for area in sorted(completed_by_area.keys()):
                 st.markdown(f"#### 🏢 {area}")
                 
-                for project in completed_by_area[area]:
-                    proj_df = df_sorted[df_sorted["Project"] == project]
+                for project in sorted(completed_by_area[area]):
+                    proj_df = df[df["Project"] == project]
                     completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
                     
                     # Header del progetto (collapsed di default per completed)
@@ -926,40 +895,74 @@ if st.session_state.section == "EOM":
     if st.session_state.eom_edit_mode and len(eom_df) > 0:
         st.subheader("✏️ Edit Activities")
         
+        # Sort by Order
+        eom_df = eom_df.sort_values('Order').reset_index(drop=True)
+        
         for idx, row in eom_df.iterrows():
-            with st.expander(f"📝 {row['Activity']}", expanded=False):
-                col1, col2 = st.columns([10, 1])
-                
-                with col1:
-                    c1, c2, c3 = st.columns(3)
-                    new_area = c1.text_input("Area", row["Area"], key=f"edit_area_{idx}")
-                    new_macro = c2.text_input("ID Macro", row["ID Macro"], key=f"edit_macro_{idx}")
-                    new_micro = c3.text_input("ID Micro", row["ID Micro"], key=f"edit_micro_{idx}")
-                    
-                    new_activity = st.text_input("Activity", row["Activity"], key=f"edit_activity_{idx}")
-                    
-                    c4, c5 = st.columns(2)
-                    new_freq = c4.text_input("Frequency", row["Frequency"], key=f"edit_freq_{idx}")
-                    new_files = c5.text_input("Files", row["Files"], key=f"edit_files_{idx}")
-                    
-                    if st.button("💾 Save changes", key=f"save_eom_{idx}", type="primary"):
-                        eom_df.loc[idx, "Area"] = new_area
-                        eom_df.loc[idx, "ID Macro"] = new_macro
-                        eom_df.loc[idx, "ID Micro"] = new_micro
-                        eom_df.loc[idx, "Activity"] = new_activity
-                        eom_df.loc[idx, "Frequency"] = new_freq
-                        eom_df.loc[idx, "Files"] = new_files
-                        eom_df.loc[idx, "Last Update"] = pd.Timestamp.now()
-                        save_csv(eom_df, EOM_PATH)
-                        st.success(f"✅ Activity updated!")
+            # Header with move buttons
+            header_cols = st.columns([0.5, 0.5, 9, 1])
+            
+            with header_cols[0]:
+                if idx > 0:
+                    if st.button("⬆️", key=f"edit_up_{idx}"):
+                        # Swap with previous
+                        current_order = row["Order"]
+                        prev_row = eom_df.iloc[idx-1]
+                        prev_order = prev_row["Order"]
+                        
+                        original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
+                        original_eom.loc[original_eom["Order"] == current_order, "Order"] = prev_order
+                        original_eom.loc[original_eom["Order"] == prev_order, "Order"] = current_order
+                        save_csv(original_eom, EOM_PATH)
                         st.rerun()
-                
-                with col2:
-                    st.write("")
-                    st.write("")
-                    if st.button("🗑️", key=f"delete_eom_{idx}"):
-                        st.session_state.confirm_delete_eom = idx
+            
+            with header_cols[1]:
+                if idx < len(eom_df) - 1:
+                    if st.button("⬇️", key=f"edit_down_{idx}"):
+                        # Swap with next
+                        current_order = row["Order"]
+                        next_row = eom_df.iloc[idx+1]
+                        next_order = next_row["Order"]
+                        
+                        original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
+                        original_eom.loc[original_eom["Order"] == current_order, "Order"] = next_order
+                        original_eom.loc[original_eom["Order"] == next_order, "Order"] = current_order
+                        save_csv(original_eom, EOM_PATH)
                         st.rerun()
+            
+            with header_cols[2]:
+                expand = st.expander(f"📝 {row['Activity']}", expanded=False)
+            
+            with header_cols[3]:
+                st.write("")
+                if st.button("🗑️", key=f"delete_eom_{idx}"):
+                    st.session_state.confirm_delete_eom = idx
+                    st.rerun()
+            
+            with expand:
+                c1, c2, c3 = st.columns(3)
+                new_area = c1.text_input("Area", row["Area"], key=f"edit_area_{idx}")
+                new_macro = c2.text_input("ID Macro", row["ID Macro"], key=f"edit_macro_{idx}")
+                new_micro = c3.text_input("ID Micro", row["ID Micro"], key=f"edit_micro_{idx}")
+                
+                new_activity = st.text_input("Activity", row["Activity"], key=f"edit_activity_{idx}")
+                
+                c4, c5 = st.columns(2)
+                new_freq = c4.text_input("Frequency", row["Frequency"], key=f"edit_freq_{idx}")
+                new_files = c5.text_input("Files", row["Files"], key=f"edit_files_{idx}")
+                
+                if st.button("💾 Save changes", key=f"save_eom_{idx}", type="primary"):
+                    original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
+                    original_eom.loc[original_eom["Order"] == row["Order"], "Area"] = new_area
+                    original_eom.loc[original_eom["Order"] == row["Order"], "ID Macro"] = new_macro
+                    original_eom.loc[original_eom["Order"] == row["Order"], "ID Micro"] = new_micro
+                    original_eom.loc[original_eom["Order"] == row["Order"], "Activity"] = new_activity
+                    original_eom.loc[original_eom["Order"] == row["Order"], "Frequency"] = new_freq
+                    original_eom.loc[original_eom["Order"] == row["Order"], "Files"] = new_files
+                    original_eom.loc[original_eom["Order"] == row["Order"], "Last Update"] = pd.Timestamp.now()
+                    save_csv(original_eom, EOM_PATH)
+                    st.success(f"✅ Activity updated!")
+                    st.rerun()
 
         st.divider()
 
@@ -1017,58 +1020,47 @@ if st.session_state.section == "EOM":
             # Nascondi colonne completate
             visible_cols = [col for col in month_cols if col not in completed_cols]
         
-        # Display activities with move buttons
-        for idx, row in eom_df.iterrows():
-            col_up, col_down, col_activity = st.columns([0.5, 0.5, 11])
-            
-            with col_up:
-                if idx > 0:
-                    if st.button("⬆️", key=f"eom_up_{idx}"):
-                        # Swap with previous
-                        current_order = eom_df.loc[idx, "Order"]
-                        prev_order = eom_df.loc[idx-1, "Order"]
-                        original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
-                        original_eom.loc[original_eom["Order"] == current_order, "Order"] = prev_order
-                        original_eom.loc[original_eom["Order"] == prev_order, "Order"] = current_order
-                        save_csv(original_eom, EOM_PATH)
-                        st.rerun()
-            
-            with col_down:
-                if idx < len(eom_df) - 1:
-                    if st.button("⬇️", key=f"eom_down_{idx}"):
-                        # Swap with next
-                        current_order = eom_df.loc[idx, "Order"]
-                        next_order = eom_df.loc[idx+1, "Order"]
-                        original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
-                        original_eom.loc[original_eom["Order"] == current_order, "Order"] = next_order
-                        original_eom.loc[original_eom["Order"] == next_order, "Order"] = current_order
-                        save_csv(original_eom, EOM_PATH)
-                        st.rerun()
-            
-            with col_activity:
-                # Activity row info
-                activity_text = f"**{row['Activity']}** ({row['Area']} - {row['ID Macro']}/{row['ID Micro']})"
-                st.write(activity_text)
-                
-                # Checkboxes for months in a compact row
-                month_cols_display = st.columns(len(visible_cols))
-                for i, month_col in enumerate(visible_cols):
-                    with month_cols_display[i]:
-                        month_short = month_col.split()[1][:3]  # Es: "January" -> "Jan"
-                        is_current = (month_col == current_month_col)
-                        label = f"🎯 {month_short}" if is_current else month_short
-                        
-                        checked = row[month_col] if month_col in row else False
-                        new_value = st.checkbox(label, value=checked, key=f"check_{idx}_{month_col}")
-                        
-                        if new_value != checked:
-                            original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
-                            original_eom.loc[original_eom["Order"] == row["Order"], month_col] = new_value
-                            original_eom.loc[original_eom["Order"] == row["Order"], "Last Update"] = pd.Timestamp.now()
-                            save_csv(original_eom, EOM_PATH)
-                            st.rerun()
-            
-            st.divider()
+        # Crea subset del dataframe con solo colonne visibili (escludi Last Update and Order)
+        display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols
+        display_df = eom_df[display_cols].copy()
+        
+        # Configura solo le colonne essenziali per evitare conflitti di tipo
+        column_config = {}
+        
+        # Aggiungi configurazione per le colonne dei mesi visibili
+        for i, col in enumerate(visible_cols):
+            is_current = (col == current_month_col)
+            column_config[col] = st.column_config.CheckboxColumn(
+                col,
+                help="🎯 **Current working month**" if is_current else "Future month",
+                default=False,
+                width="medium"
+            )
+
+        # Info su colonne nascoste
+        if not st.session_state.show_completed_months and completed_cols:
+            st.info(f"✅ **{len(completed_cols)} completed month(s) hidden**: {', '.join([c.split()[1] for c in completed_cols])}. Click 'Show Completed' to view them.")
+
+        edited = st.data_editor(
+            display_df,
+            use_container_width=True,
+            num_rows="fixed",
+            column_config=column_config,
+            hide_index=True,
+            key="eom_editor",
+            disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
+        )
+
+        # Aggiorna solo le colonne dei mesi nel dataframe originale
+        for col in visible_cols:
+            if col in edited.columns:
+                # Controlla se ci sono state modifiche
+                if not edited[col].equals(eom_df[col]):
+                    eom_df[col] = edited[col]
+                    eom_df["Last Update"] = pd.Timestamp.now()
+
+        # Salva automaticamente le modifiche
+        save_csv(eom_df, EOM_PATH)
 
         st.divider()
         
