@@ -44,7 +44,6 @@ if "confirm_delete_task" not in st.session_state:
 def load_data():
     if os.path.exists(DATA_PATH):
         df = pd.read_csv(DATA_PATH, parse_dates=["Release Date", "Due Date"])
-        # Gestisci i NaN nei campi Owner
         df["Owner"] = df["Owner"].fillna("")
         return df
     else:
@@ -72,6 +71,16 @@ def area_color(area):
 col_title, col_actions = st.columns([6, 4])
 with col_title:
     st.title("📊 Team Projects Planner")
+
+    # Last Update
+    if len(df) > 0:
+        last_update = df["Release Date"].max()
+        if not pd.isna(last_update):
+            if isinstance(last_update, str):
+                last_update = pd.to_datetime(last_update)
+            st.caption(f"🕒 Last update: {last_update.strftime('%d/%m/%Y %H:%M')}")
+    else:
+        st.caption("🕒 Last update: —")
 
 with col_actions:
     col1, col2, col3 = st.columns(3)
@@ -131,7 +140,7 @@ if st.session_state.add_project:
                     "Owner": o,
                     "Progress": p,
                     "Priority": pr,
-                    "Release Date": pd.Timestamp(date.today()),
+                    "Release Date": pd.Timestamp.now(),
                     "Due Date": pd.Timestamp(d)
                 })
             
@@ -172,9 +181,7 @@ if st.session_state.confirm_delete_project is not None:
 # CONFIRM DELETE TASK
 # ======================================================
 if st.session_state.confirm_delete_task is not None:
-    task_id = st.session_state.confirm_delete_task
-    # Usa un ID univoco basato su Project + Task name invece dell'indice
-    project_name, task_name = task_id
+    project_name, task_name = st.session_state.confirm_delete_task
     mask = (df["Project"] == project_name) & (df["Task"] == task_name)
     
     if mask.any():
@@ -239,6 +246,7 @@ if not st.session_state.add_project and len(df) > 0:
                         # Aggiorna lo stato se cambiato
                         if status != current_status:
                             df.loc[idx, "Progress"] = status
+                            df.loc[idx, "Release Date"] = pd.Timestamp.now()  # aggiorna Release Date
                             save_data(df)
                             st.rerun()
 
@@ -319,6 +327,7 @@ if not st.session_state.add_project and len(df) > 0:
                         df.loc[idx, "Progress"] = p
                         df.loc[idx, "Priority"] = pr
                         df.loc[idx, "Due Date"] = pd.Timestamp(d)
+                        df.loc[idx, "Release Date"] = pd.Timestamp.now()  # aggiorna Release Date
 
                     # Aggiungi nuovi task
                     new_rows = []
@@ -330,7 +339,7 @@ if not st.session_state.add_project and len(df) > 0:
                             "Owner": o,
                             "Progress": p,
                             "Priority": pr,
-                            "Release Date": pd.Timestamp(date.today()),
+                            "Release Date": pd.Timestamp.now(),
                             "Due Date": pd.Timestamp(d)
                         })
                     
