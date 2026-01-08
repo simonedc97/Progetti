@@ -55,8 +55,10 @@ if "reset_filters_flag" not in st.session_state:
     st.session_state.reset_filters_flag = 0
 if "reset_eom_filters_flag" not in st.session_state:
     st.session_state.reset_eom_filters_flag = 0
-if "hidden_eom_months" not in st.session_state:
-    st.session_state.hidden_eom_months = set()
+if "hidden_months" not in st.session_state:
+    st.session_state.hidden_months = []
+if "show_month_manager" not in st.session_state:
+    st.session_state.show_month_manager = False
 
 # =========================
 # HELPERS
@@ -894,24 +896,89 @@ if st.session_state.section == "EOM":
                     completed_cols.append(col)
 
     # HEADER WITH ACTIONS
-    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+    col1, col2, col3, col4, col5 = st.columns([2.5, 1, 1, 1, 1])
     with col1:
         st.caption(f"🎯 **Current working month**: {current_month_col}")
     with col2:
+        if st.button("📅 Months", use_container_width=True):
+            st.session_state.show_month_manager = not st.session_state.show_month_manager
+            st.rerun()
+    with col3:
         if st.button("🔍 Filters" if not st.session_state.show_eom_filters else "🔍 Hide", 
                      use_container_width=True):
             st.session_state.show_eom_filters = not st.session_state.show_eom_filters
             st.rerun()
-    with col3:
+    with col4:
         if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
                      use_container_width=True):
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
-    with col4:
+    with col5:
         if st.button("🗑️ Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel", 
                      use_container_width=True):
             st.session_state.eom_bulk_delete = not st.session_state.eom_bulk_delete
             st.rerun()
+
+    # ======================================================
+    # MONTH MANAGER
+    # ======================================================
+    if st.session_state.show_month_manager:
+        with st.expander("📅 Month Visibility Manager", expanded=True):
+            st.markdown("**Manage which months to display in the table**")
+            
+            # Organizza in colonne per una visualizzazione migliore
+            num_cols = 3
+            cols = st.columns(num_cols)
+            
+            for i, col in enumerate(month_cols):
+                with cols[i % num_cols]:
+                    month_name = col.split()[1]  # Estrae il nome del mese
+                    year = col.split()[2]  # Estrae l'anno
+                    
+                    # Determina lo stato attuale
+                    is_hidden = col in st.session_state.hidden_months
+                    is_completed = col in completed_cols
+                    is_current = col == current_month_col
+                    
+                    # Crea label descrittivo
+                    label = f"{month_name} {year}"
+                    if is_current:
+                        label = f"🎯 {label} (Current)"
+                    elif is_completed:
+                        label = f"✅ {label}"
+                    
+                    # Checkbox per visibilità
+                    visible = st.checkbox(
+                        label,
+                        value=not is_hidden,
+                        key=f"month_visibility_{col}",
+                        help=f"{'Completed' if is_completed else 'In progress'}"
+                    )
+                    
+                    # Aggiorna lo stato
+                    if not visible and col not in st.session_state.hidden_months:
+                        st.session_state.hidden_months.append(col)
+                    elif visible and col in st.session_state.hidden_months:
+                        st.session_state.hidden_months.remove(col)
+            
+            st.divider()
+            col_reset, col_hide_completed, col_show_all = st.columns(3)
+            
+            with col_reset:
+                if st.button("🔄 Reset to Default", use_container_width=True):
+                    st.session_state.hidden_months = []
+                    st.session_state.show_completed_months = False
+                    st.rerun()
+            
+            with col_hide_completed:
+                if st.button("🔒 Hide All Completed", use_container_width=True):
+                    st.session_state.hidden_months = completed_cols.copy()
+                    st.rerun()
+            
+            with col_show_all:
+                if st.button("👁️ Show All Months", use_container_width=True):
+                    st.session_state.hidden_months = []
+                    st.rerun()
 
     # ======================================================
     # FILTERS SECTION FOR EOM
@@ -1157,45 +1224,10 @@ if st.session_state.section == "EOM":
         # Sort by Order
         eom_df = eom_df.sort_values('Order').reset_index(drop=True)
         
-        # Show/hide completed columns toggle
-        if completed_cols:
-            col_left, col_right = st.columns([4, 1])
-            with col_right:
-                show_text = f"👁️ Show Completed ({len(completed_cols)})" if not st.session_state.show_completed_months else f"🔒 Hide Completed"
-                if st.button(show_text, use_container_width=True, key="toggle_completed"):
-                    st.session_state.show_completed_months = not st.session_state.show_completed_months
-                    st.rerun()
+        # Determina quali colonne mostrare (applica sia completed che hidden_months)
+        visible_cols = [col for col in month_cols if col not in st.session_state.hidden_months]
         
-        visible_cols = month_cols.copy()
-
-        # Nascondi mesi completati automaticamente
-        if not st.session_state.show_completed_months:
-            visible_cols = [col for col in visible_cols if col not in completed_cols]
-        
-        # Nascondi mesi forzati manualmente
-        visible_cols = [col for col in visible_cols if col not in st.session_state.hidden_eom_months]
-        # Manual hide month selector
-        with st.expander("🙈 Hide specific months"):
-            month_to_hide = st.selectbox(
-                "Select month to hide",
-                options=[m for m in month_cols if m not in st.session_state.hidden_eom_months],
-                key="manual_hide_month"
-            )
-        
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("🙈 Hide month", use_container_width=True):
-                    st.session_state.hidden_eom_months.add(month_to_hide)
-                    st.rerun()
-        
-            with col2:
-                if st.session_state.hidden_eom_months:
-                    if st.button("♻️ Reset hidden months", use_container_width=True):
-                        st.session_state.hidden_eom_months.clear()
-                        st.rerun()
-
-        
-        # Crea subset del dataframe con solo colonne visibili (escludi Last Update and Order)
+        # Crea subset del dataframe con solo colonne visibili
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols
         display_df = eom_df[display_cols].copy()
         
@@ -1213,8 +1245,10 @@ if st.session_state.section == "EOM":
             )
 
         # Info su colonne nascoste
-        if not st.session_state.show_completed_months and completed_cols:
-            st.info(f"✅ **{len(completed_cols)} completed month(s) hidden**: {', '.join([c.split()[1] for c in completed_cols])}. Click 'Show Completed' to view them.")
+        hidden_count = len(st.session_state.hidden_months)
+        if hidden_count > 0:
+            hidden_month_names = [c.split()[1] for c in st.session_state.hidden_months]
+            st.info(f"📅 **{hidden_count} month(s) hidden**: {', '.join(hidden_month_names)}. Click '📅 Months' to manage visibility.")
 
         edited = st.data_editor(
             display_df,
@@ -1259,21 +1293,23 @@ if st.session_state.section == "EOM":
             else:
                 st.warning(f"🚀 Let's get started!")
 
-        # Mostra stato delle altre colonne
+        # Mostra stato delle colonne visibili
         st.caption("**Month Overview:**")
-        cols = st.columns(min(len(visible_cols), 4))
-        for i, col in enumerate(visible_cols[:4]):
-            with cols[i]:
-                completed = eom_df[col].sum()
-                pct = int((completed / total_activities * 100)) if total_activities > 0 else 0
-                month_name = col.split()[1]  # Estrae il nome del mese
-                
-                if pct == 100:
-                    st.success(f"✅ {month_name}: {pct}%")
-                elif pct > 0:
-                    st.info(f"⏳ {month_name}: {pct}%")
-                else:
-                    st.caption(f"⚪ {month_name}: {pct}%")
+        visible_month_cols = [col for col in visible_cols if col in month_cols][:4]
+        if visible_month_cols:
+            cols = st.columns(min(len(visible_month_cols), 4))
+            for i, col in enumerate(visible_month_cols):
+                with cols[i]:
+                    completed = eom_df[col].sum()
+                    pct = int((completed / total_activities * 100)) if total_activities > 0 else 0
+                    month_name = col.split()[1]  # Estrae il nome del mese
+                    
+                    if pct == 100:
+                        st.success(f"✅ {month_name}: {pct}%")
+                    elif pct > 0:
+                        st.info(f"⏳ {month_name}: {pct}%")
+                    else:
+                        st.caption(f"⚪ {month_name}: {pct}%")
 
     elif not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) == 0:
         st.info("📝 No End-of-Month activities yet. Add your first activity above!")
