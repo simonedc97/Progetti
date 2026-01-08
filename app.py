@@ -14,7 +14,7 @@ EOM_PATH = "data/eom_activities.csv"
 
 PROJECT_COLUMNS = [
     "Area", "Project", "Task", "Owner",
-    "Progress", "Priority", "Release Date", "Due Date", "GR/Mail Object", "Last Update", "Order"
+    "Progress", "Priority", "Release Date", "Due Date", "GR/Mail Object", "Notes", "Last Update", "Order"
 ]
 
 EOM_BASE_COLUMNS = [
@@ -75,15 +75,25 @@ def clean_eom_dataframe(df, month_cols):
     # Crea una copia per non modificare l'originale
     df = df.copy()
     
-    # Assicura che le colonne boolean siano effettivamente boolean
-    bool_cols = ["🗑️ Delete"] + month_cols
-    for col in bool_cols:
+    # Assicura che le colonne dei mesi abbiano valori validi (Done, Undone, None)
+    for col in month_cols:
         if col in df.columns:
-            df[col] = df[col].fillna(False)
-            df[col] = df[col].replace("", False)
-            df[col] = df[col].apply(
-                lambda x: True if x in [True, "True", "true", "1", 1] else False
+            df[col] = df[col].fillna("None")
+            df[col] = df[col].replace("", "None")
+            # Converti vecchi valori booleani se esistono
+            df[col] = df[col].apply(lambda x: 
+                "Done" if x in [True, "True", "true", "Done", "1", 1] 
+                else "Undone" if x in [False, "False", "false", "Undone", "0", 0]
+                else "None"
             )
+    
+    # Assicura che 🗑️ Delete sia boolean
+    if "🗑️ Delete" in df.columns:
+        df["🗑️ Delete"] = df["🗑️ Delete"].fillna(False)
+        df["🗑️ Delete"] = df["🗑️ Delete"].replace("", False)
+        df["🗑️ Delete"] = df["🗑️ Delete"].apply(
+            lambda x: True if x in [True, "True", "true", "1", 1] else False
+        )
     
     # Assicura che le colonne di testo siano stringhe
     text_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
@@ -151,6 +161,8 @@ if "Release Date" not in df.columns:
     df["Release Date"] = pd.NaT
 if "GR/Mail Object" not in df.columns:
     df["GR/Mail Object"] = ""
+if "Notes" not in df.columns:
+    df["Notes"] = ""
 if "Last Update" not in df.columns:
     df["Last Update"] = pd.Timestamp.now()
 if "Order" not in df.columns:
@@ -331,9 +343,10 @@ if st.session_state.section == "Projects":
                     d = st.date_input("Due Date (optional)", value=None, key=f"new_due_{i}")
                 
                 gr = st.text_area("GR/Mail Object (optional)", key=f"new_gr_{i}", height=80)
+                notes = st.text_area("Notes (optional)", key=f"new_notes_{i}", height=60)
                 
                 if t:
-                    tasks.append((t, o, p, pr, r, d, gr))
+                    tasks.append((t, o, p, pr, r, d, gr, notes))
                 st.divider()
 
         col1, col2, col3 = st.columns(3)
@@ -349,7 +362,7 @@ if st.session_state.section == "Projects":
             else:
                 new_rows = []
                 next_order = df["Order"].max() + 1 if len(df) > 0 else 0
-                for t, o, p, pr, r, d, gr in tasks:
+                for t, o, p, pr, r, d, gr, notes in tasks:
                     new_rows.append({
                         "Area": area,
                         "Project": project,
@@ -360,6 +373,7 @@ if st.session_state.section == "Projects":
                         "Release Date": pd.Timestamp(r) if r else pd.NaT,
                         "Due Date": pd.Timestamp(d) if d else pd.NaT,
                         "GR/Mail Object": gr,
+                        "Notes": notes,
                         "Last Update": pd.Timestamp.now(),
                         "Order": next_order
                     })
@@ -497,6 +511,21 @@ if st.session_state.section == "Projects":
                                     if r.get('GR/Mail Object') and r['GR/Mail Object']:
                                         with st.expander("📧 GR/Mail Object"):
                                             st.text(r['GR/Mail Object'])
+                                    
+                                    # Notes section con auto-save
+                                    current_notes = r.get('Notes', '')
+                                    notes = st.text_area(
+                                        "📝 Notes",
+                                        value=current_notes,
+                                        key=f"notes_{project}_{r['Task']}_{idx}",
+                                        height=80,
+                                        placeholder="Add your notes here... (auto-saved)"
+                                    )
+                                    
+                                    if notes != current_notes:
+                                        df.loc[idx, "Notes"] = notes
+                                        df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                        save_csv(df, DATA_PATH)
 
                                     current_status = r["Progress"]
                                     status = st.radio(
@@ -565,8 +594,13 @@ if st.session_state.section == "Projects":
                                                     row.get("GR/Mail Object", ""), 
                                                     key=f"gr_{idx}", 
                                                     height=80)
+                                    
+                                    notes = st.text_area("Notes (optional)", 
+                                                        row.get("Notes", ""), 
+                                                        key=f"notes_{idx}", 
+                                                        height=60)
 
-                                    updated_rows.append((idx, t, o, p, pr, r, d, gr))
+                                    updated_rows.append((idx, t, o, p, pr, r, d, gr, notes))
                                     st.divider()
 
                             st.markdown("### ➕ Add new tasks to this project")
@@ -595,9 +629,10 @@ if st.session_state.section == "Projects":
                                         d = st.date_input("Due Date (optional)", value=None, key=f"nd_{project}_{i}")
                                     
                                     gr = st.text_area("GR/Mail Object (optional)", key=f"ngr_{project}_{i}", height=80)
+                                    notes = st.text_area("Notes (optional)", key=f"nnotes_{project}_{i}", height=60)
                                     
                                     if t:
-                                        new_tasks.append((t, o, p, pr, r, d, gr))
+                                        new_tasks.append((t, o, p, pr, r, d, gr, notes))
                                     st.divider()
 
                             col1, col2, col3 = st.columns(3)
@@ -610,7 +645,7 @@ if st.session_state.section == "Projects":
                                 df.loc[df["Project"] == project, "Project"] = new_name
                                 df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now()
 
-                                for idx, t, o, p, pr, r, d, gr in updated_rows:
+                                for idx, t, o, p, pr, r, d, gr, notes in updated_rows:
                                     df.loc[idx, "Task"] = t
                                     df.loc[idx, "Owner"] = o
                                     df.loc[idx, "Progress"] = p
@@ -618,10 +653,11 @@ if st.session_state.section == "Projects":
                                     df.loc[idx, "Release Date"] = pd.Timestamp(r) if r else pd.NaT
                                     df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
                                     df.loc[idx, "GR/Mail Object"] = gr
+                                    df.loc[idx, "Notes"] = notes
                                     df.loc[idx, "Last Update"] = pd.Timestamp.now()
 
                                 new_rows = []
-                                for t, o, p, pr, r, d, gr in new_tasks:
+                                for t, o, p, pr, r, d, gr, notes in new_tasks:
                                     new_rows.append({
                                         "Area": new_area,
                                         "Project": new_name,
@@ -632,6 +668,7 @@ if st.session_state.section == "Projects":
                                         "Release Date": pd.Timestamp(r) if r else pd.NaT,
                                         "Due Date": pd.Timestamp(d) if d else pd.NaT,
                                         "GR/Mail Object": gr,
+                                        "Notes": notes,
                                         "Last Update": pd.Timestamp.now(),
                                         "Order": df["Order"].max() + 1
                                     })
@@ -705,6 +742,11 @@ if st.session_state.section == "Projects":
                                     with st.expander("📧 GR/Mail Object"):
                                         st.text(r['GR/Mail Object'])
                                 
+                                # Notes section - Read only per progetti completati
+                                if r.get('Notes') and r['Notes']:
+                                    with st.expander("📝 Notes"):
+                                        st.text(r['Notes'])
+                                
                                 st.write(f"✅ Status: {r['Progress']}")
                                 st.divider()
                         
@@ -753,8 +795,13 @@ if st.session_state.section == "Projects":
                                                     row.get("GR/Mail Object", ""), 
                                                     key=f"gr_comp_{idx}", 
                                                     height=80)
+                                    
+                                    notes = st.text_area("Notes (optional)", 
+                                                        row.get("Notes", ""), 
+                                                        key=f"notes_comp_{idx}", 
+                                                        height=60)
 
-                                    updated_rows.append((idx, t, o, p, pr, r, d, gr))
+                                    updated_rows.append((idx, t, o, p, pr, r, d, gr, notes))
                                     st.divider()
 
                             st.markdown("### ➕ Add new tasks to this project")
@@ -783,9 +830,10 @@ if st.session_state.section == "Projects":
                                         d = st.date_input("Due Date (optional)", value=None, key=f"nd_comp_{project}_{i}")
                                     
                                     gr = st.text_area("GR/Mail Object (optional)", key=f"ngr_comp_{project}_{i}", height=80)
+                                    notes = st.text_area("Notes (optional)", key=f"nnotes_comp_{project}_{i}", height=60)
                                     
                                     if t:
-                                        new_tasks.append((t, o, p, pr, r, d, gr))
+                                        new_tasks.append((t, o, p, pr, r, d, gr, notes))
                                     st.divider()
 
                             col1, col2, col3 = st.columns(3)
@@ -798,7 +846,7 @@ if st.session_state.section == "Projects":
                                 df.loc[df["Project"] == project, "Project"] = new_name
                                 df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now()
 
-                                for idx, t, o, p, pr, r, d, gr in updated_rows:
+                                for idx, t, o, p, pr, r, d, gr, notes in updated_rows:
                                     df.loc[idx, "Task"] = t
                                     df.loc[idx, "Owner"] = o
                                     df.loc[idx, "Progress"] = p
@@ -806,10 +854,11 @@ if st.session_state.section == "Projects":
                                     df.loc[idx, "Release Date"] = pd.Timestamp(r) if r else pd.NaT
                                     df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
                                     df.loc[idx, "GR/Mail Object"] = gr
+                                    df.loc[idx, "Notes"] = notes
                                     df.loc[idx, "Last Update"] = pd.Timestamp.now()
 
                                 new_rows = []
-                                for t, o, p, pr, r, d, gr in new_tasks:
+                                for t, o, p, pr, r, d, gr, notes in new_tasks:
                                     new_rows.append({
                                         "Area": new_area,
                                         "Project": new_name,
@@ -820,6 +869,7 @@ if st.session_state.section == "Projects":
                                         "Release Date": pd.Timestamp(r) if r else pd.NaT,
                                         "Due Date": pd.Timestamp(d) if d else pd.NaT,
                                         "GR/Mail Object": gr,
+                                        "Notes": notes,
                                         "Last Update": pd.Timestamp.now(),
                                         "Order": df["Order"].max() + 1
                                     })
@@ -882,17 +932,20 @@ if st.session_state.section == "EOM":
     # Aggiungi colonne mesi se non esistono
     for c in month_cols:
         if c not in eom_df.columns:
-            eom_df[c] = False
+            eom_df[c] = "None"
 
     # Pulisci il DataFrame per assicurare tipi corretti
     eom_df = clean_eom_dataframe(eom_df, month_cols)
 
-    # Determina quali colonne sono completate al 100%
+    # Determina quali colonne possono essere nascoste automaticamente (tutti Done o None)
     completed_cols = []
     if len(eom_df) > 0:
         for col in month_cols:
             if col in eom_df.columns:
-                if eom_df[col].all():  # Tutte le attività completate
+                # Una colonna può essere nascosta se tutte le attività sono "Done" o "None"
+                # (nessuna attività in "Undone" o senza risposta)
+                values = eom_df[col].unique()
+                if all(v in ["Done", "None"] for v in values):
                     completed_cols.append(col)
 
     # HEADER WITH ACTIONS
@@ -1028,9 +1081,9 @@ if st.session_state.section == "EOM":
             filtered_eom_df = filtered_eom_df[filtered_eom_df["ID Micro"] == selected_eom_micro]
         
         if completion_filter == "Completed":
-            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == True]
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == "Done"]
         elif completion_filter == "Not Completed":
-            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == False]
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col].isin(["Undone", "None"])]
         
         eom_df = filtered_eom_df
         
@@ -1089,7 +1142,7 @@ if st.session_state.section == "EOM":
                     "Order": next_order
                 }
                 for c in month_cols:
-                    row[c] = False
+                    row[c] = "None"
 
                 eom_df = pd.concat([eom_df, pd.DataFrame([row])], ignore_index=True)
                 save_csv(eom_df, EOM_PATH)
@@ -1237,10 +1290,11 @@ if st.session_state.section == "EOM":
         # Aggiungi configurazione per le colonne dei mesi visibili
         for i, col in enumerate(visible_cols):
             is_current = (col == current_month_col)
-            column_config[col] = st.column_config.CheckboxColumn(
+            column_config[col] = st.column_config.SelectboxColumn(
                 col,
                 help="🎯 **Current working month**" if is_current else "Future month",
-                default=False,
+                options=["None", "Done", "Undone"],
+                default="None",
                 width="medium"
             )
 
@@ -1275,7 +1329,7 @@ if st.session_state.section == "EOM":
         
         # STATISTICS
         total_activities = len(eom_df)
-        completed_current = eom_df[current_month_col].sum() if current_month_col in eom_df.columns else 0
+        completed_current = (eom_df[current_month_col] == "Done").sum() if current_month_col in eom_df.columns else 0
         progress_pct = int((completed_current / total_activities * 100)) if total_activities > 0 else 0
         
         col1, col2 = st.columns([2, 1])
@@ -1300,7 +1354,7 @@ if st.session_state.section == "EOM":
             cols = st.columns(min(len(visible_month_cols), 4))
             for i, col in enumerate(visible_month_cols):
                 with cols[i]:
-                    completed = eom_df[col].sum()
+                    completed = (eom_df[col] == "Done").sum()
                     pct = int((completed / total_activities * 100)) if total_activities > 0 else 0
                     month_name = col.split()[1]  # Estrae il nome del mese
                     
@@ -1318,5 +1372,5 @@ if st.session_state.section == "EOM":
     st.divider()
     if len(eom_df) > 0:
         total_activities = len(eom_df)
-        completed_current_month = eom_df[current_month_col].sum() if current_month_col in eom_df.columns else 0
+        completed_current_month = (eom_df[current_month_col] == "Done").sum() if current_month_col in eom_df.columns else 0
         st.caption(f"📊 Total activities: {total_activities} | Current month completed: {completed_current_month}/{total_activities}")
