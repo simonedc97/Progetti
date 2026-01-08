@@ -59,11 +59,27 @@ else:
 # -------------------------
 progress_values = ["Not started", "In progress", "Completed"]
 progress_score = {"Not started": 0, "In progress": 0.5, "Completed": 1}
-status_icon = {"Completed": "🟢", "In progress": "🟡", "Not started": "🔴"}
 
 def area_color(area):
     h = int(hashlib.md5(area.encode()).hexdigest(), 16)
     return f"#{h % 0xFFFFFF:06x}"
+
+def status_button(label, value, idx, current_progress, color):
+    """Crea un bottone colorato se lo stato è attivo"""
+    active = (current_progress == value)
+    clicked = st.button(
+        label,
+        key=f"{value}_{idx}",
+        use_container_width=True
+    )
+    if clicked:
+        df.loc[idx, "Progress"] = value
+        df.to_csv(DATA_PATH, index=False)
+        st.rerun()
+    # Colora il bottone se attivo (via markdown hack)
+    style = f"background-color: {color if active else '#f0f0f0'}; color: {'white' if active else 'black'}; border-radius: 6px; padding:6px; width:100%; border:none; text-align:center;"
+    st.markdown(f"<div style='{style}'>{label}</div>", unsafe_allow_html=True)
+    return active
 
 # -------------------------
 # HEADER
@@ -91,7 +107,7 @@ if st.session_state.add_project:
 
     tasks = []
     for i in range(st.session_state.task_boxes):
-        with st.container(border=True):
+        with st.container():
             t = st.text_input("Task", key=f"new_task_{i}")
             o = st.text_input("Owner (optional)", key=f"new_owner_{i}")
             p = st.selectbox("Status", progress_values, key=f"new_prog_{i}")
@@ -143,61 +159,19 @@ if not st.session_state.add_project:
             # TASK VIEW (INLINE STATUS EDIT ✅)
             # --------------------------------------------------
             for idx, r in proj_df.iterrows():
-                with st.container(border=True):
+                with st.container():
                     st.markdown(f"**{r['Task']}**")
                     st.write(f"Owner: {r['Owner'] or '—'}")
                     st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
-
                     st.write("Status:")
 
                     c1, c2, c3 = st.columns(3)
-                    
-                    def status_button(label, value, color):
-                        active = (r["Progress"] == value)
-                        style = f"""
-                            background-color:{color if active else '#f0f0f0'};
-                            color:{'white' if active else 'black'};
-                            border-radius:6px;
-                            padding:6px;
-                            width:100%;
-                            border:none;
-                        """
-                        return st.button(
-                            label,
-                            key=f"{value}_{idx}",
-                            help=value
-                        ), active
-                    
                     with c1:
-                        if st.button(
-                            "🔴 Not started",
-                            key=f"ns_{idx}",
-                            use_container_width=True
-                        ):
-                            df.loc[idx, "Progress"] = "Not started"
-                            df.to_csv(DATA_PATH, index=False)
-                            st.rerun()
-                    
+                        status_button("🔴 Not started", "Not started", idx, r["Progress"], "#ff4d4d")
                     with c2:
-                        if st.button(
-                            "🟡 In progress",
-                            key=f"ip_{idx}",
-                            use_container_width=True
-                        ):
-                            df.loc[idx, "Progress"] = "In progress"
-                            df.to_csv(DATA_PATH, index=False)
-                            st.rerun()
-                    
+                        status_button("🟡 In progress", "In progress", idx, r["Progress"], "#ffcc00")
                     with c3:
-                        if st.button(
-                            "🟢 Completed",
-                            key=f"cp_{idx}",
-                            use_container_width=True
-                        ):
-                            df.loc[idx, "Progress"] = "Completed"
-                            df.to_csv(DATA_PATH, index=False)
-                            st.rerun()
-
+                        status_button("🟢 Completed", "Completed", idx, r["Progress"], "#2ecc71")
 
             # ==================================================
             # ✏️ EDIT PROJECT (COMPLETO)
@@ -212,7 +186,7 @@ if not st.session_state.add_project:
                 updated_rows = []
 
                 for idx, row in proj_df.iterrows():
-                    with st.container(border=True):
+                    with st.container():
                         t = st.text_input("Task", row["Task"], key=f"t_{idx}")
                         o = st.text_input("Owner (optional)", row["Owner"], key=f"o_{idx}")
                         p = st.selectbox(
@@ -237,7 +211,7 @@ if not st.session_state.add_project:
                 new_tasks = []
 
                 for i in range(st.session_state[add_key]):
-                    with st.container(border=True):
+                    with st.container():
                         t = st.text_input("Task", key=f"nt_{project}_{i}")
                         o = st.text_input("Owner (optional)", key=f"no_{project}_{i}")
                         p = st.selectbox("Status", progress_values, key=f"np_{project}_{i}")
