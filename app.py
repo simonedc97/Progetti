@@ -687,14 +687,154 @@ if st.session_state.section == "Projects":
                     with expand:
                         st.progress(completion / 100)
                         
-                        for idx, r in proj_df.iterrows():
-                            st.markdown(f"**{r['Task']}**")
-                            st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
-                            release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
-                            due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
-                            st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
-                            st.write(f"✅ Status: {r['Progress']}")
-                            st.divider()
+                        # TASK VIEW (NON IN EDIT MODE)
+                        if not st.session_state.edit_mode:
+                            for idx, r in proj_df.iterrows():
+                                st.markdown(f"**{r['Task']}**")
+                                st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
+                                release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
+                                due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
+                                st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
+                                
+                                # GR/Mail Object
+                                if r.get('GR/Mail Object') and r['GR/Mail Object']:
+                                    with st.expander("📧 GR/Mail Object"):
+                                        st.text(r['GR/Mail Object'])
+                                
+                                st.write(f"✅ Status: {r['Progress']}")
+                                st.divider()
+                        
+                        # ✏️ EDIT MODE - FULL EDIT FOR COMPLETED PROJECTS
+                        if st.session_state.edit_mode:
+                            st.markdown("### ✏️ Edit completed project")
+                            new_area = st.text_input("Area", area, key=f"ea_comp_{project}")
+                            new_name = st.text_input("Project name", project, key=f"ep_comp_{project}")
+
+                            st.markdown("### Edit existing tasks")
+                            updated_rows = []
+
+                            for idx, row in proj_df.iterrows():
+                                with st.container():
+                                    st.markdown(f"**Task #{idx}**")
+                                    t = st.text_input("Task", row["Task"], key=f"t_comp_{idx}")
+                                    o = st.text_input("Owner (optional)", row["Owner"] if row["Owner"] else "", key=f"o_comp_{idx}")
+                                    
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        p = st.selectbox(
+                                            "Status",
+                                            progress_values,
+                                            index=progress_values.index(row["Progress"]),
+                                            key=f"p_comp_{idx}"
+                                        )
+                                    with col_b:
+                                        pr = st.selectbox(
+                                            "Priority",
+                                            ["Low", "Important", "Urgent"],
+                                            index=["Low", "Important", "Urgent"].index(row["Priority"]),
+                                            key=f"pr_comp_{idx}"
+                                        )
+                                    
+                                    col_c, col_d = st.columns(2)
+                                    with col_c:
+                                        r = st.date_input("Release Date", 
+                                                         row["Release Date"] if pd.notna(row["Release Date"]) else None, 
+                                                         key=f"r_comp_{idx}")
+                                    with col_d:
+                                        d = st.date_input("Due Date", 
+                                                         row["Due Date"] if pd.notna(row["Due Date"]) else None, 
+                                                         key=f"d_comp_{idx}")
+                                    
+                                    gr = st.text_area("GR/Mail Object (optional)", 
+                                                    row.get("GR/Mail Object", ""), 
+                                                    key=f"gr_comp_{idx}", 
+                                                    height=80)
+
+                                    updated_rows.append((idx, t, o, p, pr, r, d, gr))
+                                    st.divider()
+
+                            st.markdown("### ➕ Add new tasks to this project")
+                            add_key = f"add_boxes_comp_{project}"
+                            if add_key not in st.session_state:
+                                st.session_state[add_key] = 1
+                                
+                            new_tasks = []
+
+                            for i in range(st.session_state[add_key]):
+                                with st.container():
+                                    st.markdown(f"**New Task {i+1}**")
+                                    t = st.text_input("Task", key=f"nt_comp_{project}_{i}")
+                                    o = st.text_input("Owner (optional)", key=f"no_comp_{project}_{i}")
+                                    
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        p = st.selectbox("Status", progress_values, key=f"np_comp_{project}_{i}")
+                                    with col_b:
+                                        pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_comp_{project}_{i}")
+                                    
+                                    col_c, col_d = st.columns(2)
+                                    with col_c:
+                                        r = st.date_input("Release Date (optional)", value=None, key=f"nr_comp_{project}_{i}")
+                                    with col_d:
+                                        d = st.date_input("Due Date (optional)", value=None, key=f"nd_comp_{project}_{i}")
+                                    
+                                    gr = st.text_area("GR/Mail Object (optional)", key=f"ngr_comp_{project}_{i}", height=80)
+                                    
+                                    if t:
+                                        new_tasks.append((t, o, p, pr, r, d, gr))
+                                    st.divider()
+
+                            col1, col2, col3 = st.columns(3)
+                            if col1.button("➕ Add task", key=f"add_comp_{project}"):
+                                st.session_state[add_key] += 1
+                                st.rerun()
+
+                            if col2.button("💾 Save changes", key=f"save_comp_{project}", type="primary"):
+                                df.loc[df["Project"] == project, "Area"] = new_area
+                                df.loc[df["Project"] == project, "Project"] = new_name
+                                df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now()
+
+                                for idx, t, o, p, pr, r, d, gr in updated_rows:
+                                    df.loc[idx, "Task"] = t
+                                    df.loc[idx, "Owner"] = o
+                                    df.loc[idx, "Progress"] = p
+                                    df.loc[idx, "Priority"] = pr
+                                    df.loc[idx, "Release Date"] = pd.Timestamp(r) if r else pd.NaT
+                                    df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
+                                    df.loc[idx, "GR/Mail Object"] = gr
+                                    df.loc[idx, "Last Update"] = pd.Timestamp.now()
+
+                                new_rows = []
+                                for t, o, p, pr, r, d, gr in new_tasks:
+                                    new_rows.append({
+                                        "Area": new_area,
+                                        "Project": new_name,
+                                        "Task": t,
+                                        "Owner": o,
+                                        "Progress": p,
+                                        "Priority": pr,
+                                        "Release Date": pd.Timestamp(r) if r else pd.NaT,
+                                        "Due Date": pd.Timestamp(d) if d else pd.NaT,
+                                        "GR/Mail Object": gr,
+                                        "Last Update": pd.Timestamp.now(),
+                                        "Order": df["Order"].max() + 1
+                                    })
+                                
+                                if new_rows:
+                                    df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+
+                                save_csv(df, DATA_PATH)
+                                st.session_state.edit_mode = False
+                                if add_key in st.session_state:
+                                    st.session_state[add_key] = 1
+                                st.success("✅ Changes saved successfully!")
+                                st.rerun()
+
+                            if col3.button("❌ Cancel", key=f"cancel_comp_{project}"):
+                                st.session_state.edit_mode = False
+                                if add_key in st.session_state:
+                                    st.session_state[add_key] = 1
+                                st.rerun()
 
     elif not st.session_state.add_project and len(df) == 0:
         st.info("📝 No projects yet. Click '➕ Project' to create your first project!")
@@ -896,38 +1036,48 @@ if st.session_state.section == "EOM":
         st.subheader("✏️ Edit Activities")
         
         # Sort by Order
-        eom_df = eom_df.sort_values('Order').reset_index(drop=True)
+        eom_df_sorted = eom_df.sort_values('Order').reset_index(drop=True)
         
-        for idx, row in eom_df.iterrows():
+        for idx, row in eom_df_sorted.iterrows():
             # Header with move buttons
             header_cols = st.columns([0.5, 0.5, 9, 1])
             
             with header_cols[0]:
                 if idx > 0:
-                    if st.button("⬆️", key=f"edit_up_{idx}"):
-                        # Swap with previous
+                    if st.button("⬆️", key=f"edit_up_{idx}_{row['Activity'][:10]}"):
+                        # Swap Order values with previous activity
                         current_order = row["Order"]
-                        prev_row = eom_df.iloc[idx-1]
+                        prev_row = eom_df_sorted.iloc[idx-1]
                         prev_order = prev_row["Order"]
                         
-                        original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
-                        original_eom.loc[original_eom["Order"] == current_order, "Order"] = prev_order
-                        original_eom.loc[original_eom["Order"] == prev_order, "Order"] = current_order
-                        save_csv(original_eom, EOM_PATH)
+                        # Load fresh data and swap
+                        fresh_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
+                        mask_current = fresh_eom["Order"] == current_order
+                        mask_prev = fresh_eom["Order"] == prev_order
+                        
+                        fresh_eom.loc[mask_current, "Order"] = prev_order
+                        fresh_eom.loc[mask_prev, "Order"] = current_order
+                        
+                        save_csv(fresh_eom, EOM_PATH)
                         st.rerun()
             
             with header_cols[1]:
-                if idx < len(eom_df) - 1:
-                    if st.button("⬇️", key=f"edit_down_{idx}"):
-                        # Swap with next
+                if idx < len(eom_df_sorted) - 1:
+                    if st.button("⬇️", key=f"edit_down_{idx}_{row['Activity'][:10]}"):
+                        # Swap Order values with next activity
                         current_order = row["Order"]
-                        next_row = eom_df.iloc[idx+1]
+                        next_row = eom_df_sorted.iloc[idx+1]
                         next_order = next_row["Order"]
                         
-                        original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
-                        original_eom.loc[original_eom["Order"] == current_order, "Order"] = next_order
-                        original_eom.loc[original_eom["Order"] == next_order, "Order"] = current_order
-                        save_csv(original_eom, EOM_PATH)
+                        # Load fresh data and swap
+                        fresh_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
+                        mask_current = fresh_eom["Order"] == current_order
+                        mask_next = fresh_eom["Order"] == next_order
+                        
+                        fresh_eom.loc[mask_current, "Order"] = next_order
+                        fresh_eom.loc[mask_next, "Order"] = current_order
+                        
+                        save_csv(fresh_eom, EOM_PATH)
                         st.rerun()
             
             with header_cols[2]:
@@ -935,32 +1085,33 @@ if st.session_state.section == "EOM":
             
             with header_cols[3]:
                 st.write("")
-                if st.button("🗑️", key=f"delete_eom_{idx}"):
+                if st.button("🗑️", key=f"delete_eom_{idx}_{row['Activity'][:10]}"):
                     st.session_state.confirm_delete_eom = idx
                     st.rerun()
             
             with expand:
                 c1, c2, c3 = st.columns(3)
-                new_area = c1.text_input("Area", row["Area"], key=f"edit_area_{idx}")
-                new_macro = c2.text_input("ID Macro", row["ID Macro"], key=f"edit_macro_{idx}")
-                new_micro = c3.text_input("ID Micro", row["ID Micro"], key=f"edit_micro_{idx}")
+                new_area = c1.text_input("Area", row["Area"], key=f"edit_area_{idx}_{row['Activity'][:10]}")
+                new_macro = c2.text_input("ID Macro", row["ID Macro"], key=f"edit_macro_{idx}_{row['Activity'][:10]}")
+                new_micro = c3.text_input("ID Micro", row["ID Micro"], key=f"edit_micro_{idx}_{row['Activity'][:10]}")
                 
-                new_activity = st.text_input("Activity", row["Activity"], key=f"edit_activity_{idx}")
+                new_activity = st.text_input("Activity", row["Activity"], key=f"edit_activity_{idx}_{row['Activity'][:10]}")
                 
                 c4, c5 = st.columns(2)
-                new_freq = c4.text_input("Frequency", row["Frequency"], key=f"edit_freq_{idx}")
-                new_files = c5.text_input("Files", row["Files"], key=f"edit_files_{idx}")
+                new_freq = c4.text_input("Frequency", row["Frequency"], key=f"edit_freq_{idx}_{row['Activity'][:10]}")
+                new_files = c5.text_input("Files", row["Files"], key=f"edit_files_{idx}_{row['Activity'][:10]}")
                 
-                if st.button("💾 Save changes", key=f"save_eom_{idx}", type="primary"):
-                    original_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
-                    original_eom.loc[original_eom["Order"] == row["Order"], "Area"] = new_area
-                    original_eom.loc[original_eom["Order"] == row["Order"], "ID Macro"] = new_macro
-                    original_eom.loc[original_eom["Order"] == row["Order"], "ID Micro"] = new_micro
-                    original_eom.loc[original_eom["Order"] == row["Order"], "Activity"] = new_activity
-                    original_eom.loc[original_eom["Order"] == row["Order"], "Frequency"] = new_freq
-                    original_eom.loc[original_eom["Order"] == row["Order"], "Files"] = new_files
-                    original_eom.loc[original_eom["Order"] == row["Order"], "Last Update"] = pd.Timestamp.now()
-                    save_csv(original_eom, EOM_PATH)
+                if st.button("💾 Save changes", key=f"save_eom_{idx}_{row['Activity'][:10]}", type="primary"):
+                    fresh_eom = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
+                    mask = fresh_eom["Order"] == row["Order"]
+                    fresh_eom.loc[mask, "Area"] = new_area
+                    fresh_eom.loc[mask, "ID Macro"] = new_macro
+                    fresh_eom.loc[mask, "ID Micro"] = new_micro
+                    fresh_eom.loc[mask, "Activity"] = new_activity
+                    fresh_eom.loc[mask, "Frequency"] = new_freq
+                    fresh_eom.loc[mask, "Files"] = new_files
+                    fresh_eom.loc[mask, "Last Update"] = pd.Timestamp.now()
+                    save_csv(fresh_eom, EOM_PATH)
                     st.success(f"✅ Activity updated!")
                     st.rerun()
 
