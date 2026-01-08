@@ -50,6 +50,29 @@ def save_csv(df, path):
     os.makedirs("data", exist_ok=True)
     df.to_csv(path, index=False)
 
+def clean_eom_dataframe(df, month_cols):
+    """Pulisce il DataFrame EOM assicurando i tipi corretti"""
+    # Crea una copia per non modificare l'originale
+    df = df.copy()
+    
+    # Assicura che le colonne boolean siano effettivamente boolean
+    bool_cols = ["🗑️ Delete"] + month_cols
+    for col in bool_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna(False)
+            df[col] = df[col].replace("", False)
+            df[col] = df[col].apply(
+                lambda x: True if x in [True, "True", "true", "1", 1] else False
+            )
+    
+    # Assicura che le colonne di testo siano stringhe
+    text_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
+    for col in text_cols:
+        if col in df.columns:
+            df[col] = df[col].fillna("").astype(str)
+    
+    return df
+
 def load_csv(path, columns, date_cols=None):
     if os.path.exists(path):
         if date_cols:
@@ -408,19 +431,21 @@ if st.session_state.section == "EOM":
     month_cols = [d.strftime("%d %B %Y") for d in eom_dates]
     current_month_col = month_cols[0]
 
-    # INIT COLUMNS
+    # INIT COLUMNS - Assicurati che tutti i campi base esistano
     for col in EOM_BASE_COLUMNS:
         if col not in eom_df.columns:
-            eom_df[col] = ""
+            if col == "🗑️ Delete":
+                eom_df[col] = False
+            else:
+                eom_df[col] = ""
 
+    # Aggiungi colonne mesi se non esistono
     for c in month_cols:
         if c not in eom_df.columns:
             eom_df[c] = False
 
-    # Converte i booleani da stringhe se necessario
-    for c in month_cols + ["🗑️ Delete"]:
-        if c in eom_df.columns:
-            eom_df[c] = eom_df[c].astype(bool)
+    # Pulisci il DataFrame per assicurare tipi corretti
+    eom_df = clean_eom_dataframe(eom_df, month_cols)
 
     # ADD ACTIVITY
     with st.expander("➕ Add new End-of-Month Activity", expanded=False):
@@ -459,34 +484,22 @@ if st.session_state.section == "EOM":
 
     # TABLE
     if len(eom_df) > 0:
-        # Configura le colonne
+        # Configura solo le colonne essenziali per evitare conflitti di tipo
         column_config = {
             "🗑️ Delete": st.column_config.CheckboxColumn(
                 "🗑️",
-                help="Select to delete this activity",
-                width="small"
-            ),
-            "Area": st.column_config.TextColumn("Area", width="medium"),
-            "ID Macro": st.column_config.TextColumn("ID Macro", width="small"),
-            "ID Micro": st.column_config.TextColumn("ID Micro", width="small"),
-            "Activity": st.column_config.TextColumn("Activity", width="large"),
-            "Frequency": st.column_config.TextColumn("Frequency", width="medium"),
-            "Files": st.column_config.TextColumn("Files", width="medium"),
+                help="Select to delete",
+                default=False
+            )
         }
         
         # Aggiungi configurazione per le colonne dei mesi
         for i, col in enumerate(month_cols):
-            if i == 0:
-                column_config[col] = st.column_config.CheckboxColumn(
-                    col,
-                    help="✅ Current End-of-Month period",
-                    width="medium"
-                )
-            else:
-                column_config[col] = st.column_config.CheckboxColumn(
-                    col,
-                    width="medium"
-                )
+            column_config[col] = st.column_config.CheckboxColumn(
+                col,
+                help="✅ Current month" if i == 0 else "Future month",
+                default=False
+            )
 
         edited = st.data_editor(
             eom_df,
