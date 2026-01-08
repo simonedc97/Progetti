@@ -68,7 +68,7 @@ def area_color(area):
 # -------------------------
 # HEADER
 # -------------------------
-col_title, col_actions = st.columns([8, 2])
+col_title, col_actions = st.columns([6, 4])
 with col_title:
     st.title("📊 Team Projects Planner")
     st.caption(f"Logged in as **{st.session_state.user}**")
@@ -79,6 +79,16 @@ with col_actions:
     if st.button("➕ Project"):
         st.session_state.add_project = True
         st.session_state.task_boxes = 1
+
+    # ➖ DELETE PROJECT
+    st.markdown("---")
+    project_to_delete = st.selectbox("Select project to delete", [""] + df["Project"].unique().tolist())
+    if project_to_delete:
+        if st.button("➖ Confirm delete"):
+            df = df[df["Project"] != project_to_delete]
+            df.to_csv(DATA_PATH, index=False)
+            st.success(f"Project '{project_to_delete}' deleted")
+            st.experimental_rerun()
 
 # ======================================================
 # ➕ ADD PROJECT
