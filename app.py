@@ -30,6 +30,9 @@ st.session_state.setdefault("user", None)
 st.session_state.setdefault("edit_mode", False)
 st.session_state.setdefault("add_project", False)
 st.session_state.setdefault("task_boxes", 1)
+st.session_state.setdefault("delete_mode", False)
+st.session_state.setdefault("confirm_delete_project", None)
+st.session_state.setdefault("confirm_delete_task", None)
 
 # ======================================================
 # 🔐 LOGIN – BOX CLICK
@@ -59,7 +62,6 @@ else:
 # -------------------------
 progress_values = ["Not started", "In progress", "Completed"]
 progress_score = {"Not started": 0, "In progress": 0.5, "Completed": 1}
-status_colors = {"Not started": "#ff4d4d", "In progress": "#ffcc00", "Completed": "#2ecc71"}
 
 def area_color(area):
     h = int(hashlib.md5(area.encode()).hexdigest(), 16)
@@ -79,16 +81,8 @@ with col_actions:
     if st.button("➕ Project"):
         st.session_state.add_project = True
         st.session_state.task_boxes = 1
-
-    # ➖ DELETE PROJECT
-    st.markdown("---")
-    project_to_delete = st.selectbox("Select project to delete", [""] + df["Project"].unique().tolist())
-    if project_to_delete:
-        if st.button("➖ Confirm delete"):
-            df = df[df["Project"] != project_to_delete]
-            df.to_csv(DATA_PATH, index=False)
-            st.success(f"Project '{project_to_delete}' deleted")
-            st.experimental_rerun()
+    if st.button("➖ Delete"):
+        st.session_state.delete_mode = not st.session_state.delete_mode
 
 # ======================================================
 # ➕ ADD PROJECT
@@ -146,19 +140,30 @@ if not st.session_state.add_project:
         completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
         area = proj_df["Area"].iloc[0]
 
-        with st.expander(f"📁 {project} — {completion}%"):
+        # HEADER PROGETTO CON DELETE MODE
+        header_text = f"📁 {project} — {completion}%"
+        if st.session_state.delete_mode:
+            cols = st.columns([8, 1])
+            with cols[0]:
+                expand = st.expander(header_text, expanded=True)
+            with cols[1]:
+                if st.button("🗑️", key=f"delete_proj_{project}"):
+                    st.session_state.confirm_delete_project = project
+        else:
+            expand = st.expander(header_text)
+
+        with expand:
             st.progress(completion / 100)
 
-            # --------------------------------------------------
-            # TASK VIEW (status con colori permanenti)
-            # --------------------------------------------------
+            # TASK VIEW
             for idx, r in proj_df.iterrows():
-                with st.container():
+                cols = st.columns([10, 1])
+                with cols[0]:
                     st.markdown(f"**{r['Task']}**")
                     st.write(f"Owner: {r['Owner'] or '—'}")
                     st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
 
-                    # Radio orizzontale per selezionare lo stato
+                    # Radio per selezionare lo stato
                     status = st.radio(
                         "Status",
                         options=progress_values,
@@ -168,8 +173,11 @@ if not st.session_state.add_project:
                     )
                     df.loc[idx, "Progress"] = status
 
-            # Aggiorniamo il CSV ad ogni ciclo
-            df.to_csv(DATA_PATH, index=False)
+                if not st.session_state.edit_mode:
+                    # Delete task icon
+                    with cols[1]:
+                        if st.button("🗑️", key=f"delete_task_{idx}"):
+                            st.session_state.confirm_delete_task = idx
 
             # ==================================================
             # ✏️ EDIT PROJECT
@@ -248,3 +256,42 @@ if not st.session_state.add_project:
                     st.session_state.edit_mode = False
                     st.session_state[add_key] = 1
                     st.rerun()
+
+# ======================================================
+# CONFIRM DELETE PROJECT
+# ======================================================
+if st.session_state.confirm_delete_project:
+    project = st.session_state.confirm_delete_project
+    st.warning(f"Are you sure you want to delete the project **{project}**? This cannot be undone!")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Yes, delete project"):
+            df = df[df["Project"] != project]
+            df.to_csv(DATA_PATH, index=False)
+            st.success(f"Project '{project}' deleted")
+            st.session_state.confirm_delete_project = None
+            st.experimental_rerun()
+    with col2:
+        if st.button("Cancel"):
+            st.session_state.confirm_delete_project = None
+            st.experimental_rerun()
+
+# ======================================================
+# CONFIRM DELETE TASK
+# ======================================================
+if st.session_state.confirm_delete_task is not None:
+    idx = st.session_state.confirm_delete_task
+    task_name = df.loc[idx, "Task"]
+    st.warning(f"Are you sure you want to delete the task **{task_name}**? This cannot be undone!")
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Yes, delete task"):
+            df = df.drop(idx).reset_index(drop=True)
+            df.to_csv(DATA_PATH, index=False)
+            st.success(f"Task '{task_name}' deleted")
+            st.session_state.confirm_delete_task = None
+            st.experimental_rerun()
+    with col2:
+        if st.button("Cancel"):
+            st.session_state.confirm_delete_task = None
+            st.experimental_rerun()
