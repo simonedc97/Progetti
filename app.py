@@ -31,15 +31,26 @@ st.session_state.setdefault("edit_mode", False)
 st.session_state.setdefault("add_project", False)
 st.session_state.setdefault("task_boxes", 1)
 
-# -------------------------
-# LOGIN
-# -------------------------
+# ======================================================
+# 🔐 LOGIN (BOX STYLE)
+# ======================================================
 if st.session_state.user is None:
-    st.title("🔐 Login")
-    user = st.selectbox("Select user", USERS)
-    if st.button("Login"):
-        st.session_state.user = user
-        st.rerun()
+    st.markdown("<h1 style='text-align:center'>🔐 Login</h1>", unsafe_allow_html=True)
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    cols = st.columns(4)
+
+    for col, user in zip(cols, USERS):
+        with col:
+            with st.container(border=True):
+                st.markdown(
+                    f"<h3 style='text-align:center'>{user}</h3>",
+                    unsafe_allow_html=True
+                )
+                if st.button("Login", key=f"login_{user}", use_container_width=True):
+                    st.session_state.user = user
+                    st.rerun()
+
     st.stop()
 
 # -------------------------
@@ -183,7 +194,6 @@ if not st.session_state.add_project:
 
                 st.progress(completion / 100)
 
-                # TASK LIST
                 for _, row in proj_df.iterrows():
                     with st.container(border=True):
                         st.markdown(f"**{row['Task']}**")
@@ -192,16 +202,12 @@ if not st.session_state.add_project:
                         st.write(f"{status_icon[row['Progress']]} {row['Progress']}")
                         st.write(f"Due: {row['Due Date'].date()}")
 
-                # ======================================================
                 # ✏️ EDIT PROJECT
-                # ======================================================
                 if st.session_state.edit_mode:
                     st.markdown("### ✏️ Edit project")
 
                     new_area = st.text_input("Area", area, key=f"area_{project}")
                     new_name = st.text_input("Project name", project, key=f"name_{project}")
-
-                    st.markdown("### Add new tasks")
 
                     key_boxes = f"edit_boxes_{project}"
                     st.session_state.setdefault(key_boxes, 1)
