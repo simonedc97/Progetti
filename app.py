@@ -51,6 +51,10 @@ if "show_eom_filters" not in st.session_state:
     st.session_state.show_eom_filters = False
 if "eom_bulk_delete" not in st.session_state:
     st.session_state.eom_bulk_delete = False
+if "reset_filters_flag" not in st.session_state:
+    st.session_state.reset_filters_flag = 0
+if "reset_eom_filters_flag" not in st.session_state:
+    st.session_state.reset_eom_filters_flag = 0
 
 # =========================
 # HELPERS
@@ -205,37 +209,45 @@ if st.session_state.section == "Projects":
             
             with col1:
                 areas = ["All"] + sorted(df["Area"].dropna().unique().tolist())
-                selected_area = st.selectbox("Area", areas, key="filter_area")
+                selected_area = st.selectbox("Area", areas, 
+                                            index=0,
+                                            key=f"filter_area_{st.session_state.reset_filters_flag}")
             
             with col2:
                 owners = ["All"] + sorted(df["Owner"].dropna().unique().tolist())
-                selected_owner = st.selectbox("Owner", owners, key="filter_owner")
+                selected_owner = st.selectbox("Owner", owners, 
+                                             index=0,
+                                             key=f"filter_owner_{st.session_state.reset_filters_flag}")
             
             with col3:
                 statuses = ["All"] + progress_values
-                selected_status = st.selectbox("Status", statuses, key="filter_status")
+                selected_status = st.selectbox("Status", statuses, 
+                                              index=0,
+                                              key=f"filter_status_{st.session_state.reset_filters_flag}")
             
             with col4:
                 priorities = ["All", "Low", "Important", "Urgent"]
-                selected_priority = st.selectbox("Priority", priorities, key="filter_priority")
+                selected_priority = st.selectbox("Priority", priorities, 
+                                                index=0,
+                                                key=f"filter_priority_{st.session_state.reset_filters_flag}")
             
             col5, col6, col7 = st.columns(3)
             
             with col5:
-                due_filter = st.selectbox("Due Date", ["All", "Overdue", "This Week", "This Month", "No Date"], key="filter_due")
+                due_filter = st.selectbox("Due Date", 
+                                         ["All", "Overdue", "This Week", "This Month", "No Date"], 
+                                         index=0,
+                                         key=f"filter_due_{st.session_state.reset_filters_flag}")
             
             with col6:
                 projects = ["All"] + sorted(df["Project"].dropna().unique().tolist())
-                selected_project = st.selectbox("Project", projects, key="filter_project")
+                selected_project = st.selectbox("Project", projects, 
+                                               index=0,
+                                               key=f"filter_project_{st.session_state.reset_filters_flag}")
             
             with col7:
                 if st.button("🔄 Reset Filters", use_container_width=True):
-                    st.session_state.filter_area = "All"
-                    st.session_state.filter_owner = "All"
-                    st.session_state.filter_status = "All"
-                    st.session_state.filter_priority = "All"
-                    st.session_state.filter_due = "All"
-                    st.session_state.filter_project = "All"
+                    st.session_state.reset_filters_flag += 1
                     st.rerun()
         
         # Apply filters
@@ -643,7 +655,7 @@ if st.session_state.section == "EOM":
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
     with col4:
-        if st.button("🗑️ Bulk Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel", 
+        if st.button("🗑️ Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel", 
                      use_container_width=True):
             st.session_state.eom_bulk_delete = not st.session_state.eom_bulk_delete
             st.rerun()
@@ -657,26 +669,30 @@ if st.session_state.section == "EOM":
             
             with col1:
                 eom_areas = ["All"] + sorted(eom_df["Area"].dropna().unique().tolist())
-                selected_eom_area = st.selectbox("Area", eom_areas, key="filter_eom_area")
+                selected_eom_area = st.selectbox("Area", eom_areas, 
+                                                index=0,
+                                                key=f"filter_eom_area_{st.session_state.reset_eom_filters_flag}")
             
             with col2:
                 eom_macros = ["All"] + sorted(eom_df["ID Macro"].dropna().unique().tolist())
-                selected_eom_macro = st.selectbox("ID Macro", eom_macros, key="filter_eom_macro")
+                selected_eom_macro = st.selectbox("ID Macro", eom_macros, 
+                                                 index=0,
+                                                 key=f"filter_eom_macro_{st.session_state.reset_eom_filters_flag}")
             
             with col3:
                 eom_micros = ["All"] + sorted(eom_df["ID Micro"].dropna().unique().tolist())
-                selected_eom_micro = st.selectbox("ID Micro", eom_micros, key="filter_eom_micro")
+                selected_eom_micro = st.selectbox("ID Micro", eom_micros, 
+                                                 index=0,
+                                                 key=f"filter_eom_micro_{st.session_state.reset_eom_filters_flag}")
             
             with col4:
                 completion_filter = st.selectbox("Current Month Status", 
                                                 ["All", "Completed", "Not Completed"], 
-                                                key="filter_eom_status")
+                                                index=0,
+                                                key=f"filter_eom_status_{st.session_state.reset_eom_filters_flag}")
             
             if st.button("🔄 Reset Filters", use_container_width=True, key="reset_eom_filters"):
-                st.session_state.filter_eom_area = "All"
-                st.session_state.filter_eom_macro = "All"
-                st.session_state.filter_eom_micro = "All"
-                st.session_state.filter_eom_status = "All"
+                st.session_state.reset_eom_filters_flag += 1
                 st.rerun()
         
         # Apply filters
@@ -802,10 +818,10 @@ if st.session_state.section == "EOM":
         st.divider()
 
     # ======================================================
-    # BULK DELETE MODE
+    # DELETE MODE (Multiple Selection)
     # ======================================================
     if st.session_state.eom_bulk_delete and len(eom_df) > 0:
-        st.warning("🗑️ **Bulk Delete Mode**: Select activities to delete")
+        st.warning("🗑️ **Delete Mode**: Select activities to delete")
         
         selected_to_delete = []
         for idx, row in eom_df.iterrows():
