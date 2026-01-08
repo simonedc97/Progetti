@@ -148,17 +148,56 @@ if not st.session_state.add_project:
                     st.write(f"Owner: {r['Owner'] or '—'}")
                     st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
 
-                    new_status = st.selectbox(
-                        "Status",
-                        progress_values,
-                        index=progress_values.index(r["Progress"]),
-                        key=f"status_inline_{idx}"
-                    )
+                    st.write("Status:")
 
-                    if new_status != r["Progress"]:
-                        df.loc[idx, "Progress"] = new_status
-                        df.to_csv(DATA_PATH, index=False)
-                        st.rerun()
+                    c1, c2, c3 = st.columns(3)
+                    
+                    def status_button(label, value, color):
+                        active = (r["Progress"] == value)
+                        style = f"""
+                            background-color:{color if active else '#f0f0f0'};
+                            color:{'white' if active else 'black'};
+                            border-radius:6px;
+                            padding:6px;
+                            width:100%;
+                            border:none;
+                        """
+                        return st.button(
+                            label,
+                            key=f"{value}_{idx}",
+                            help=value
+                        ), active
+                    
+                    with c1:
+                        if st.button(
+                            "🔴 Not started",
+                            key=f"ns_{idx}",
+                            use_container_width=True
+                        ):
+                            df.loc[idx, "Progress"] = "Not started"
+                            df.to_csv(DATA_PATH, index=False)
+                            st.rerun()
+                    
+                    with c2:
+                        if st.button(
+                            "🟡 In progress",
+                            key=f"ip_{idx}",
+                            use_container_width=True
+                        ):
+                            df.loc[idx, "Progress"] = "In progress"
+                            df.to_csv(DATA_PATH, index=False)
+                            st.rerun()
+                    
+                    with c3:
+                        if st.button(
+                            "🟢 Completed",
+                            key=f"cp_{idx}",
+                            use_container_width=True
+                        ):
+                            df.loc[idx, "Progress"] = "Completed"
+                            df.to_csv(DATA_PATH, index=False)
+                            st.rerun()
+
 
             # ==================================================
             # ✏️ EDIT PROJECT (COMPLETO)
