@@ -50,7 +50,10 @@ if st.session_state.user is None:
 # LOAD DATA
 # -------------------------
 if os.path.exists(DATA_PATH):
-    df = pd.read_csv(DATA_PATH, parse_dates=["Release Date", "Due Date"])
+    df = pd.read_csv(DATA_PATH)
+    # Convertiamo le date in datetime in modo sicuro
+    df["Release Date"] = pd.to_datetime(df["Release Date"], errors='coerce')
+    df["Due Date"] = pd.to_datetime(df["Due Date"], errors='coerce')
 else:
     df = pd.DataFrame(columns=COLUMNS)
 
@@ -64,6 +67,11 @@ status_colors = {"Not started": "#ff4d4d", "In progress": "#ffcc00", "Completed"
 def area_color(area):
     h = int(hashlib.md5(area.encode()).hexdigest(), 16)
     return f"#{h % 0xFFFFFF:06x}"
+
+def format_date(d):
+    if pd.notnull(d):
+        return d.strftime("%Y-%m-%d")
+    return "—"
 
 # -------------------------
 # HEADER
@@ -98,7 +106,7 @@ if st.session_state.add_project:
             pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"new_prio_{i}")
             d = st.date_input("Due Date", value=date.today(), key=f"new_due_{i}")
             if t:
-                tasks.append((t, o, p, pr, d))
+                tasks.append((t, o, p, pr, pd.Timestamp(d)))
 
     col1, col2, col3 = st.columns(3)
     if col1.button("➕ Add task"):
@@ -114,7 +122,7 @@ if st.session_state.add_project:
                 "Owner": o,
                 "Progress": p,
                 "Priority": pr,
-                "Release Date": date.today(),
+                "Release Date": pd.Timestamp(date.today()),
                 "Due Date": d
             }])], ignore_index=True)
 
@@ -146,7 +154,7 @@ if not st.session_state.add_project:
                 with st.container():
                     st.markdown(f"**{r['Task']}**")
                     st.write(f"Owner: {r['Owner'] or '—'}")
-                    st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
+                    st.write(f"Priority: {r['Priority']} | Due: {format_date(r['Due Date'])}")
 
                     # Radio orizzontale per selezionare lo stato
                     status = st.radio(
@@ -188,9 +196,9 @@ if not st.session_state.add_project:
                             index=["Low", "Important", "Urgent"].index(row["Priority"]),
                             key=f"pr_{idx}"
                         )
-                        d = st.date_input("Due Date", row["Due Date"], key=f"d_{idx}")
+                        d = st.date_input("Due Date", row["Due Date"].date() if pd.notnull(row["Due Date"]) else date.today(), key=f"d_{idx}")
 
-                        updated_rows.append((idx, t, o, p, pr, d))
+                        updated_rows.append((idx, t, o, p, pr, pd.Timestamp(d)))
 
                 st.markdown("### ➕ Add new tasks")
                 add_key = f"add_boxes_{project}"
@@ -205,7 +213,7 @@ if not st.session_state.add_project:
                         pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_{project}_{i}")
                         d = st.date_input("Due Date", value=date.today(), key=f"nd_{project}_{i}")
                         if t:
-                            new_tasks.append((t, o, p, pr, d))
+                            new_tasks.append((t, o, p, pr, pd.Timestamp(d)))
 
                 col1, col2, col3 = st.columns(3)
                 if col1.button("➕ Add task", key=f"add_{project}"):
@@ -226,7 +234,7 @@ if not st.session_state.add_project:
                             "Owner": o,
                             "Progress": p,
                             "Priority": pr,
-                            "Release Date": date.today(),
+                            "Release Date": pd.Timestamp(date.today()),
                             "Due Date": d
                         }])], ignore_index=True)
 
