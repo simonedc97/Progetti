@@ -382,7 +382,7 @@ if st.session_state.section == "Projects":
                         "Due Date": pd.Timestamp(d) if d else pd.NaT,
                         "GR/Mail Object": gr,
                         "Notes": notes,
-                        "Last Update": pd.Timestamp.now(),
+                        "Last Update": pd.Timestamp.now() + pd.Timedelta(hours=1),
                         "Order": next_order
                     })
                     next_order += 1
@@ -531,17 +531,19 @@ if st.session_state.section == "Projects":
                                     
                                     # Notes section con auto-save
                                     current_notes = r.get('Notes', '')
+                                    if pd.isna(current_notes):
+                                        current_notes = ''
                                     notes = st.text_area(
                                         "📝 Notes",
                                         value=current_notes,
                                         key=f"notes_{project}_{r['Task']}_{idx}",
                                         height=80,
-                                        placeholder="Add your notes here... (auto-saved)"
+                                        placeholder="Add your notes here..."
                                     )
                                     
                                     if notes != current_notes:
                                         df.loc[idx, "Notes"] = notes
-                                        df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                        df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
                                         save_csv(df, DATA_PATH)
 
                                     current_status = r["Progress"]
@@ -555,7 +557,7 @@ if st.session_state.section == "Projects":
                                     
                                     if status != current_status:
                                         df.loc[idx, "Progress"] = status
-                                        df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                        df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
                                         save_csv(df, DATA_PATH)
                                         st.rerun()
 
@@ -682,7 +684,7 @@ if st.session_state.section == "Projects":
                             if col2.button("💾 Save changes", key=f"save_{project}", type="primary"):
                                 df.loc[df["Project"] == project, "Area"] = new_area
                                 df.loc[df["Project"] == project, "Project"] = new_name
-                                df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now()
+                                df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
 
                                 for idx, t, o, p, pr, r, d, gr, notes in updated_rows:
                                     df.loc[idx, "Task"] = t
@@ -693,7 +695,7 @@ if st.session_state.section == "Projects":
                                     df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
                                     df.loc[idx, "GR/Mail Object"] = gr
                                     df.loc[idx, "Notes"] = notes
-                                    df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                    df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
 
                                 new_rows = []
                                 for t, o, p, pr, r, d, gr, notes in new_tasks:
@@ -708,7 +710,7 @@ if st.session_state.section == "Projects":
                                         "Due Date": pd.Timestamp(d) if d else pd.NaT,
                                         "GR/Mail Object": gr,
                                         "Notes": notes,
-                                        "Last Update": pd.Timestamp.now(),
+                                        "Last Update": pd.Timestamp.now() + pd.Timedelta(hours=1),
                                         "Order": df["Order"].max() + 1
                                     })
                                 
@@ -914,7 +916,7 @@ if st.session_state.section == "Projects":
                             if col2.button("💾 Save changes", key=f"save_comp_{project}", type="primary"):
                                 df.loc[df["Project"] == project, "Area"] = new_area
                                 df.loc[df["Project"] == project, "Project"] = new_name
-                                df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now()
+                                df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
 
                                 for idx, t, o, p, pr, r, d, gr, notes in updated_rows:
                                     df.loc[idx, "Task"] = t
@@ -925,7 +927,7 @@ if st.session_state.section == "Projects":
                                     df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
                                     df.loc[idx, "GR/Mail Object"] = gr
                                     df.loc[idx, "Notes"] = notes
-                                    df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                    df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
 
                                 new_rows = []
                                 for t, o, p, pr, r, d, gr, notes in new_tasks:
@@ -940,7 +942,7 @@ if st.session_state.section == "Projects":
                                         "Due Date": pd.Timestamp(d) if d else pd.NaT,
                                         "GR/Mail Object": gr,
                                         "Notes": notes,
-                                        "Last Update": pd.Timestamp.now(),
+                                        "Last Update": pd.Timestamp.now() + pd.Timedelta(hours=1),
                                         "Order": df["Order"].max() + 1
                                     })
                                 
@@ -1208,7 +1210,7 @@ if st.session_state.section == "EOM":
                     "Frequency": frequency,
                     "Files": files,
                     "🗑️ Delete": False,
-                    "Last Update": pd.Timestamp.now(),
+                    "Last Update": pd.Timestamp.now() + pd.Timedelta(hours=1),
                     "Order": next_order
                 }
                 for c in month_cols:
@@ -1302,7 +1304,7 @@ if st.session_state.section == "EOM":
                     fresh_eom.loc[mask, "Activity"] = new_activity
                     fresh_eom.loc[mask, "Frequency"] = new_freq
                     fresh_eom.loc[mask, "Files"] = new_files
-                    fresh_eom.loc[mask, "Last Update"] = pd.Timestamp.now()
+                    fresh_eom.loc[mask, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
                     save_csv(fresh_eom, EOM_PATH)
                     st.success(f"✅ Activity updated!")
                     st.rerun()
@@ -1390,7 +1392,7 @@ if st.session_state.section == "EOM":
                 # Controlla se ci sono state modifiche
                 if not edited[col].equals(eom_df[col]):
                     eom_df[col] = edited[col]
-                    eom_df["Last Update"] = pd.Timestamp.now()
+                    eom_df["Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
 
         # Salva automaticamente le modifiche
         save_csv(eom_df, EOM_PATH)
