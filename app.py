@@ -64,22 +64,25 @@ def area_color(area):
     h = int(hashlib.md5(area.encode()).hexdigest(), 16)
     return f"#{h % 0xFFFFFF:06x}"
 
-def status_button(label, value, idx, current_progress, color):
-    """Crea un bottone colorato se lo stato è attivo"""
+def status_button_inline(label, value, idx, current_progress, color):
+    """Bottone colorato inline, evidenziato se attivo"""
     active = (current_progress == value)
-    clicked = st.button(
-        label,
-        key=f"{value}_{idx}",
-        use_container_width=True
-    )
+    clicked = st.button(label, key=f"{value}_{idx}", use_container_width=True)
     if clicked:
         df.loc[idx, "Progress"] = value
         df.to_csv(DATA_PATH, index=False)
         st.rerun()
-    # Colora il bottone se attivo (via markdown hack)
-    style = f"background-color: {color if active else '#f0f0f0'}; color: {'white' if active else 'black'}; border-radius: 6px; padding:6px; width:100%; border:none; text-align:center;"
+    # Styling del bottone
+    style = f"""
+        background-color: {color if active else '#f0f0f0'};
+        color: {'white' if active else 'black'};
+        border-radius: 6px;
+        padding:6px;
+        width:100%;
+        text-align:center;
+        border:none;
+    """
     st.markdown(f"<div style='{style}'>{label}</div>", unsafe_allow_html=True)
-    return active
 
 # -------------------------
 # HEADER
@@ -156,7 +159,7 @@ if not st.session_state.add_project:
             st.progress(completion / 100)
 
             # --------------------------------------------------
-            # TASK VIEW (INLINE STATUS EDIT ✅)
+            # TASK VIEW (INLINE STATUS EDIT ✅) su una sola riga
             # --------------------------------------------------
             for idx, r in proj_df.iterrows():
                 with st.container():
@@ -165,13 +168,13 @@ if not st.session_state.add_project:
                     st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
                     st.write("Status:")
 
-                    c1, c2, c3 = st.columns(3)
-                    with c1:
-                        status_button("🔴 Not started", "Not started", idx, r["Progress"], "#ff4d4d")
-                    with c2:
-                        status_button("🟡 In progress", "In progress", idx, r["Progress"], "#ffcc00")
-                    with c3:
-                        status_button("🟢 Completed", "Completed", idx, r["Progress"], "#2ecc71")
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        status_button_inline("🔴 Not started", "Not started", idx, r["Progress"], "#ff4d4d")
+                    with col2:
+                        status_button_inline("🟡 In progress", "In progress", idx, r["Progress"], "#ffcc00")
+                    with col3:
+                        status_button_inline("🟢 Completed", "Completed", idx, r["Progress"], "#2ecc71")
 
             # ==================================================
             # ✏️ EDIT PROJECT (COMPLETO)
