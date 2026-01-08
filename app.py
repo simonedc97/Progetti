@@ -75,16 +75,16 @@ def clean_eom_dataframe(df, month_cols):
     # Crea una copia per non modificare l'originale
     df = df.copy()
     
-    # Assicura che le colonne dei mesi abbiano valori validi (Done, Undone, None)
+    # Assicura che le colonne dei mesi abbiano valori validi (🟢 Verde, 🔴 Rosso, ⚪ Grigio)
     for col in month_cols:
         if col in df.columns:
-            df[col] = df[col].fillna("None")
-            df[col] = df[col].replace("", "None")
-            # Converti vecchi valori booleani se esistono
+            df[col] = df[col].fillna("⚪")
+            df[col] = df[col].replace("", "⚪")
+            # Converti vecchi valori se esistono
             df[col] = df[col].apply(lambda x: 
-                "Done" if x in [True, "True", "true", "Done", "1", 1] 
-                else "Undone" if x in [False, "False", "false", "Undone", "0", 0]
-                else "None"
+                "🟢" if x in [True, "True", "true", "Done", "🟢", "1", 1] 
+                else "🔴" if x in [False, "False", "false", "Undone", "🔴", "0", 0]
+                else "⚪"
             )
     
     # Assicura che 🗑️ Delete sia boolean
@@ -342,11 +342,19 @@ if st.session_state.section == "Projects":
                 with col_d:
                     d = st.date_input("Due Date (optional)", value=None, key=f"new_due_{i}")
                 
-                gr = st.text_area("GR/Mail Object (optional)", key=f"new_gr_{i}", height=80)
+                col_gr, col_mail = st.columns(2)
+                with col_gr:
+                    gr = st.text_area("📋 GR Number (optional)", key=f"new_gr_{i}", height=80)
+                with col_mail:
+                    mail = st.text_area("📧 Mail Object (optional)", key=f"new_mail_{i}", height=80)
+                
+                # Combino GR e Mail per compatibilità con la struttura esistente
+                gr_combined = f"{gr}\n{mail}" if gr or mail else ""
+                
                 notes = st.text_area("Notes (optional)", key=f"new_notes_{i}", height=60)
                 
                 if t:
-                    tasks.append((t, o, p, pr, r, d, gr, notes))
+                    tasks.append((t, o, p, pr, r, d, gr_combined, notes))
                 st.divider()
 
         col1, col2, col3 = st.columns(3)
@@ -507,10 +515,19 @@ if st.session_state.section == "Projects":
                                     due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
                                     st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
                                     
-                                    # GR/Mail Object
-                                    if r.get('GR/Mail Object') and r['GR/Mail Object']:
-                                        with st.expander("📧 GR/Mail Object"):
-                                            st.text(r['GR/Mail Object'])
+                                    # GR Number
+                                    gr_text = r.get('GR/Mail Object', '')
+                                    if gr_text:
+                                        # Prova a separare GR e Mail Object se sono divisi da qualche separatore
+                                        parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
+                                        
+                                        if parts[0].strip():
+                                            with st.expander("📋 GR Number"):
+                                                st.text(parts[0].strip())
+                                        
+                                        if len(parts) > 1 and parts[1].strip():
+                                            with st.expander("📧 Mail Object"):
+                                                st.text(parts[1].strip())
                                     
                                     # Notes section con auto-save
                                     current_notes = r.get('Notes', '')
@@ -590,17 +607,31 @@ if st.session_state.section == "Projects":
                                                          row["Due Date"] if pd.notna(row["Due Date"]) else None, 
                                                          key=f"d_{idx}")
                                     
-                                    gr = st.text_area("GR/Mail Object (optional)", 
-                                                    row.get("GR/Mail Object", ""), 
-                                                    key=f"gr_{idx}", 
-                                                    height=80)
+                                    # Separa GR e Mail Object dal campo combinato
+                                    gr_combined = row.get("GR/Mail Object", "")
+                                    parts = gr_combined.split('\n', 1) if '\n' in gr_combined else [gr_combined, '']
+                                    
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", 
+                                                        parts[0] if parts[0] else "", 
+                                                        key=f"gr_{idx}", 
+                                                        height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", 
+                                                           parts[1] if len(parts) > 1 else "", 
+                                                           key=f"mail_{idx}", 
+                                                           height=80)
+                                    
+                                    # Combino GR e Mail per salvare
+                                    gr_combined_save = f"{gr}\n{mail}" if gr or mail else ""
                                     
                                     notes = st.text_area("Notes (optional)", 
                                                         row.get("Notes", ""), 
                                                         key=f"notes_{idx}", 
                                                         height=60)
 
-                                    updated_rows.append((idx, t, o, p, pr, r, d, gr, notes))
+                                    updated_rows.append((idx, t, o, p, pr, r, d, gr_combined_save, notes))
                                     st.divider()
 
                             st.markdown("### ➕ Add new tasks to this project")
@@ -628,11 +659,19 @@ if st.session_state.section == "Projects":
                                     with col_d:
                                         d = st.date_input("Due Date (optional)", value=None, key=f"nd_{project}_{i}")
                                     
-                                    gr = st.text_area("GR/Mail Object (optional)", key=f"ngr_{project}_{i}", height=80)
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", key=f"ngr_{project}_{i}", height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", key=f"nmail_{project}_{i}", height=80)
+                                    
+                                    # Combino GR e Mail
+                                    gr_combined = f"{gr}\n{mail}" if gr or mail else ""
+                                    
                                     notes = st.text_area("Notes (optional)", key=f"nnotes_{project}_{i}", height=60)
                                     
                                     if t:
-                                        new_tasks.append((t, o, p, pr, r, d, gr, notes))
+                                        new_tasks.append((t, o, p, pr, r, d, gr_combined, notes))
                                     st.divider()
 
                             col1, col2, col3 = st.columns(3)
@@ -737,10 +776,19 @@ if st.session_state.section == "Projects":
                                 due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
                                 st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
                                 
-                                # GR/Mail Object
-                                if r.get('GR/Mail Object') and r['GR/Mail Object']:
-                                    with st.expander("📧 GR/Mail Object"):
-                                        st.text(r['GR/Mail Object'])
+                                # GR Number and Mail Object
+                                gr_text = r.get('GR/Mail Object', '')
+                                if gr_text:
+                                    # Prova a separare GR e Mail Object se sono divisi da qualche separatore
+                                    parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
+                                    
+                                    if parts[0].strip():
+                                        with st.expander("📋 GR Number"):
+                                            st.text(parts[0].strip())
+                                    
+                                    if len(parts) > 1 and parts[1].strip():
+                                        with st.expander("📧 Mail Object"):
+                                            st.text(parts[1].strip())
                                 
                                 # Notes section - Read only per progetti completati
                                 if r.get('Notes') and r['Notes']:
@@ -791,17 +839,31 @@ if st.session_state.section == "Projects":
                                                          row["Due Date"] if pd.notna(row["Due Date"]) else None, 
                                                          key=f"d_comp_{idx}")
                                     
-                                    gr = st.text_area("GR/Mail Object (optional)", 
-                                                    row.get("GR/Mail Object", ""), 
-                                                    key=f"gr_comp_{idx}", 
-                                                    height=80)
+                                    # Separa GR e Mail Object dal campo combinato
+                                    gr_combined = row.get("GR/Mail Object", "")
+                                    parts = gr_combined.split('\n', 1) if '\n' in gr_combined else [gr_combined, '']
+                                    
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", 
+                                                        parts[0] if parts[0] else "", 
+                                                        key=f"gr_comp_{idx}", 
+                                                        height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", 
+                                                           parts[1] if len(parts) > 1 else "", 
+                                                           key=f"mail_comp_{idx}", 
+                                                           height=80)
+                                    
+                                    # Combino GR e Mail per salvare
+                                    gr_combined_save = f"{gr}\n{mail}" if gr or mail else ""
                                     
                                     notes = st.text_area("Notes (optional)", 
                                                         row.get("Notes", ""), 
                                                         key=f"notes_comp_{idx}", 
                                                         height=60)
 
-                                    updated_rows.append((idx, t, o, p, pr, r, d, gr, notes))
+                                    updated_rows.append((idx, t, o, p, pr, r, d, gr_combined_save, notes))
                                     st.divider()
 
                             st.markdown("### ➕ Add new tasks to this project")
@@ -829,11 +891,19 @@ if st.session_state.section == "Projects":
                                     with col_d:
                                         d = st.date_input("Due Date (optional)", value=None, key=f"nd_comp_{project}_{i}")
                                     
-                                    gr = st.text_area("GR/Mail Object (optional)", key=f"ngr_comp_{project}_{i}", height=80)
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", key=f"ngr_comp_{project}_{i}", height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", key=f"nmail_comp_{project}_{i}", height=80)
+                                    
+                                    # Combino GR e Mail
+                                    gr_combined = f"{gr}\n{mail}" if gr or mail else ""
+                                    
                                     notes = st.text_area("Notes (optional)", key=f"nnotes_comp_{project}_{i}", height=60)
                                     
                                     if t:
-                                        new_tasks.append((t, o, p, pr, r, d, gr, notes))
+                                        new_tasks.append((t, o, p, pr, r, d, gr_combined, notes))
                                     st.divider()
 
                             col1, col2, col3 = st.columns(3)
@@ -932,20 +1002,20 @@ if st.session_state.section == "EOM":
     # Aggiungi colonne mesi se non esistono
     for c in month_cols:
         if c not in eom_df.columns:
-            eom_df[c] = "None"
+            eom_df[c] = "⚪"
 
     # Pulisci il DataFrame per assicurare tipi corretti
     eom_df = clean_eom_dataframe(eom_df, month_cols)
 
-    # Determina quali colonne possono essere nascoste automaticamente (tutti Done o None)
+    # Determina quali colonne possono essere nascoste automaticamente (tutti 🟢 o ⚪)
     completed_cols = []
     if len(eom_df) > 0:
         for col in month_cols:
             if col in eom_df.columns:
-                # Una colonna può essere nascosta se tutte le attività sono "Done" o "None"
-                # (nessuna attività in "Undone" o senza risposta)
+                # Una colonna può essere nascosta se tutte le attività sono "🟢" o "⚪"
+                # (nessuna attività in "🔴")
                 values = eom_df[col].unique()
-                if all(v in ["Done", "None"] for v in values):
+                if all(v in ["🟢", "⚪"] for v in values):
                     completed_cols.append(col)
 
     # HEADER WITH ACTIONS
@@ -1081,9 +1151,9 @@ if st.session_state.section == "EOM":
             filtered_eom_df = filtered_eom_df[filtered_eom_df["ID Micro"] == selected_eom_micro]
         
         if completion_filter == "Completed":
-            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == "Done"]
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == "🟢"]
         elif completion_filter == "Not Completed":
-            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col].isin(["Undone", "None"])]
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col].isin(["🔴", "⚪"])]
         
         eom_df = filtered_eom_df
         
@@ -1142,7 +1212,7 @@ if st.session_state.section == "EOM":
                     "Order": next_order
                 }
                 for c in month_cols:
-                    row[c] = "None"
+                    row[c] = "⚪"
 
                 eom_df = pd.concat([eom_df, pd.DataFrame([row])], ignore_index=True)
                 save_csv(eom_df, EOM_PATH)
@@ -1293,9 +1363,9 @@ if st.session_state.section == "EOM":
             column_config[col] = st.column_config.SelectboxColumn(
                 col,
                 help="🎯 **Current working month**" if is_current else "Future month",
-                options=["None", "Done", "Undone"],
-                default="None",
-                width="medium"
+                options=["⚪", "🟢", "🔴"],
+                default="⚪",
+                width="small"
             )
 
         # Info su colonne nascoste
@@ -1329,7 +1399,7 @@ if st.session_state.section == "EOM":
         
         # STATISTICS
         total_activities = len(eom_df)
-        completed_current = (eom_df[current_month_col] == "Done").sum() if current_month_col in eom_df.columns else 0
+        completed_current = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
         progress_pct = int((completed_current / total_activities * 100)) if total_activities > 0 else 0
         
         col1, col2 = st.columns([2, 1])
@@ -1354,7 +1424,7 @@ if st.session_state.section == "EOM":
             cols = st.columns(min(len(visible_month_cols), 4))
             for i, col in enumerate(visible_month_cols):
                 with cols[i]:
-                    completed = (eom_df[col] == "Done").sum()
+                    completed = (eom_df[col] == "🟢").sum()
                     pct = int((completed / total_activities * 100)) if total_activities > 0 else 0
                     month_name = col.split()[1]  # Estrae il nome del mese
                     
@@ -1372,5 +1442,5 @@ if st.session_state.section == "EOM":
     st.divider()
     if len(eom_df) > 0:
         total_activities = len(eom_df)
-        completed_current_month = (eom_df[current_month_col] == "Done").sum() if current_month_col in eom_df.columns else 0
+        completed_current_month = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
         st.caption(f"📊 Total activities: {total_activities} | Current month completed: {completed_current_month}/{total_activities}")
