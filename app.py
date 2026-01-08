@@ -64,26 +64,6 @@ def area_color(area):
     h = int(hashlib.md5(area.encode()).hexdigest(), 16)
     return f"#{h % 0xFFFFFF:06x}"
 
-def status_button_inline(label, value, idx, current_progress, color):
-    """Bottone colorato inline, evidenziato se attivo"""
-    active = (current_progress == value)
-    clicked = st.button(label, key=f"{value}_{idx}", use_container_width=True)
-    if clicked:
-        df.loc[idx, "Progress"] = value
-        df.to_csv(DATA_PATH, index=False)
-        st.rerun()
-    # Styling del bottone
-    style = f"""
-        background-color: {color if active else '#f0f0f0'};
-        color: {'white' if active else 'black'};
-        border-radius: 6px;
-        padding:6px;
-        width:100%;
-        text-align:center;
-        border:none;
-    """
-    st.markdown(f"<div style='{style}'>{label}</div>", unsafe_allow_html=True)
-
 # -------------------------
 # HEADER
 # -------------------------
@@ -159,7 +139,7 @@ if not st.session_state.add_project:
             st.progress(completion / 100)
 
             # --------------------------------------------------
-            # TASK VIEW (INLINE STATUS EDIT ✅) su una sola riga
+            # TASK VIEW (INLINE STATUS EDIT ✅) su una sola riga cliccabile
             # --------------------------------------------------
             for idx, r in proj_df.iterrows():
                 with st.container():
@@ -168,13 +148,24 @@ if not st.session_state.add_project:
                     st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
                     st.write("Status:")
 
-                    col1, col2, col3 = st.columns(3)
-                    with col1:
-                        status_button_inline("🔴 Not started", "Not started", idx, r["Progress"], "#ff4d4d")
-                    with col2:
-                        status_button_inline("🟡 In progress", "In progress", idx, r["Progress"], "#ffcc00")
-                    with col3:
-                        status_button_inline("🟢 Completed", "Completed", idx, r["Progress"], "#2ecc71")
+                    status_colors = {"Not started": "#ff4d4d", "In progress": "#ffcc00", "Completed": "#2ecc71"}
+                    cols = st.columns(3)
+                    for i, (label, value) in enumerate(zip(["🔴 Not started", "🟡 In progress", "🟢 Completed"],
+                                                           ["Not started", "In progress", "Completed"])):
+                        with cols[i]:
+                            # Se è lo stato attuale, colore attivo; altrimenti grigio
+                            color = status_colors[value] if r["Progress"] == value else "#f0f0f0"
+                            text_color = "white" if r["Progress"] == value else "black"
+                            clicked = st.button(label, key=f"status_{idx}_{value}", use_container_width=True)
+                            if clicked:
+                                df.loc[idx, "Progress"] = value
+                                df.to_csv(DATA_PATH, index=False)
+                                st.rerun()
+                            # Aggiorna lo stile del bottone colorato
+                            st.markdown(
+                                f"<div style='display:none;background-color:{color};color:{text_color};border-radius:6px;padding:6px;width:100%;'></div>",
+                                unsafe_allow_html=True
+                            )
 
             # ==================================================
             # ✏️ EDIT PROJECT (COMPLETO)
