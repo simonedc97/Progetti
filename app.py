@@ -59,6 +59,7 @@ else:
 # -------------------------
 progress_values = ["Not started", "In progress", "Completed"]
 progress_score = {"Not started": 0, "In progress": 0.5, "Completed": 1}
+status_colors = {"Not started": "#ff4d4d", "In progress": "#ffcc00", "Completed": "#2ecc71"}
 
 def area_color(area):
     h = int(hashlib.md5(area.encode()).hexdigest(), 16)
@@ -139,51 +140,26 @@ if not st.session_state.add_project:
             st.progress(completion / 100)
 
             # --------------------------------------------------
-            # TASK VIEW (INLINE STATUS EDIT ✅)
+            # TASK VIEW (status con colori permanenti)
             # --------------------------------------------------
-            status_colors = {"Not started": "#ff4d4d", "In progress": "#ffcc00", "Completed": "#2ecc71"}
-
             for idx, r in proj_df.iterrows():
                 with st.container():
                     st.markdown(f"**{r['Task']}**")
                     st.write(f"Owner: {r['Owner'] or '—'}")
                     st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
 
-                    cols = st.columns(3)
-                    for i, (label, value) in enumerate(zip(
-                        ["🔴 Not started", "🟡 In progress", "🟢 Completed"],
-                        ["Not started", "In progress", "Completed"]
-                    )):
-                        with cols[i]:
-                            # Se è lo stato attuale, colore attivo; altrimenti grigio chiaro
-                            color = status_colors[value] if r["Progress"] == value else "#f0f0f0"
-                            text_color = "white" if r["Progress"] == value else "black"
+                    # Radio orizzontale per selezionare lo stato
+                    status = st.radio(
+                        "Status",
+                        options=progress_values,
+                        index=progress_values.index(r["Progress"]),
+                        key=f"status_radio_{idx}",
+                        horizontal=True
+                    )
+                    df.loc[idx, "Progress"] = status
 
-                            clicked = st.button(
-                                label,
-                                key=f"status_{idx}_{value}",
-                                use_container_width=True
-                            )
-                            if clicked:
-                                df.loc[idx, "Progress"] = value
-                                df.to_csv(DATA_PATH, index=False)
-                                st.rerun()
-
-                            # Stile dinamico bottone
-                            st.markdown(
-                                f"""
-                                <style>
-                                div.stButton > button:first-child {{
-                                    background-color: {color};
-                                    color: {text_color};
-                                    border-radius: 6px;
-                                    padding: 6px;
-                                    width: 100%;
-                                }}
-                                </style>
-                                """,
-                                unsafe_allow_html=True
-                            )
+            # Aggiorniamo il CSV ad ogni ciclo
+            df.to_csv(DATA_PATH, index=False)
 
             # ==================================================
             # ✏️ EDIT PROJECT
