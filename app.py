@@ -55,6 +55,8 @@ if "reset_filters_flag" not in st.session_state:
     st.session_state.reset_filters_flag = 0
 if "reset_eom_filters_flag" not in st.session_state:
     st.session_state.reset_eom_filters_flag = 0
+if "hidden_eom_months" not in st.session_state:
+    st.session_state.hidden_eom_months = set()
 
 # =========================
 # HELPERS
@@ -1164,12 +1166,34 @@ if st.session_state.section == "EOM":
                     st.session_state.show_completed_months = not st.session_state.show_completed_months
                     st.rerun()
         
-        # Determina quali colonne mostrare
         visible_cols = month_cols.copy()
-        
+
+        # Nascondi mesi completati automaticamente
         if not st.session_state.show_completed_months:
-            # Nascondi colonne completate
-            visible_cols = [col for col in month_cols if col not in completed_cols]
+            visible_cols = [col for col in visible_cols if col not in completed_cols]
+        
+        # Nascondi mesi forzati manualmente
+        visible_cols = [col for col in visible_cols if col not in st.session_state.hidden_eom_months]
+        # Manual hide month selector
+        with st.expander("🙈 Hide specific months"):
+            month_to_hide = st.selectbox(
+                "Select month to hide",
+                options=[m for m in month_cols if m not in st.session_state.hidden_eom_months],
+                key="manual_hide_month"
+            )
+        
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🙈 Hide month", use_container_width=True):
+                    st.session_state.hidden_eom_months.add(month_to_hide)
+                    st.rerun()
+        
+            with col2:
+                if st.session_state.hidden_eom_months:
+                    if st.button("♻️ Reset hidden months", use_container_width=True):
+                        st.session_state.hidden_eom_months.clear()
+                        st.rerun()
+
         
         # Crea subset del dataframe con solo colonne visibili (escludi Last Update and Order)
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols
