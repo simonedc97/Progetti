@@ -7,7 +7,7 @@ import calendar
 # =========================
 # CONFIG
 # =========================
-st.set_page_config(page_title="Team Planner", layout="wide")
+st.set_page_config(page_title="RM Insurance Planner", layout="wide")
 
 DATA_PATH = "data/planner.csv"
 EOM_PATH = "data/eom_activities.csv"
@@ -60,11 +60,11 @@ eom_df = load_csv(EOM_PATH, [])
 # =========================
 # HEADER + NAVIGATION
 # =========================
-st.title("🗂️ Team Planner")
+st.title("🗂️ RM Insurance Planner")
 
 nav1, nav2 = st.columns(2)
 with nav1:
-    if st.button("📊 Projects Planner", use_container_width=True):
+    if st.button("📊 Projects Activities", use_container_width=True):
         st.session_state.section = "Projects"
 with nav2:
     if st.button("📅 End of Month Activities", use_container_width=True):
@@ -73,13 +73,13 @@ with nav2:
 st.divider()
 
 # ======================================================
-# 📊 PROJECTS PLANNER (SEZIONE 1)
+# 📊 Projects Activities (SEZIONE 1)
 # ======================================================
 if st.session_state.section == "Projects":
 
     col_title, col_actions = st.columns([6, 4])
     with col_title:
-        st.subheader("📊 Projects Planner")
+        st.subheader("📊 Projects Activities")
         if len(df) > 0 and "Release Date" in df:
             last_update = pd.to_datetime(df["Release Date"]).max()
             st.caption(f"🕒 Last update: {last_update.strftime('%d/%m/%Y %H:%M')}")
