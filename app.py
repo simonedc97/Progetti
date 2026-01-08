@@ -14,7 +14,7 @@ EOM_PATH = "data/eom_activities.csv"
 
 PROJECT_COLUMNS = [
     "Area", "Project", "Task", "Owner",
-    "Progress", "Priority", "Release Date", "Due Date"
+    "Progress", "Priority", "Release Date", "Due Date", "GR/Mail Object"
 ]
 
 EOM_BASE_COLUMNS = [
@@ -45,6 +45,12 @@ if "eom_edit_mode" not in st.session_state:
     st.session_state.eom_edit_mode = False
 if "confirm_delete_eom" not in st.session_state:
     st.session_state.confirm_delete_eom = None
+if "show_filters" not in st.session_state:
+    st.session_state.show_filters = False
+if "show_eom_filters" not in st.session_state:
+    st.session_state.show_eom_filters = False
+if "eom_bulk_delete" not in st.session_state:
+    st.session_state.eom_bulk_delete = False
 
 # =========================
 # HELPERS
@@ -131,6 +137,12 @@ def get_next_months(n=6, include_previous=True):
 df = load_csv(DATA_PATH, PROJECT_COLUMNS, date_cols=["Release Date", "Due Date"])
 if "Owner" in df.columns:
     df["Owner"] = df["Owner"].fillna("")
+if "GR/Mail Object" in df.columns:
+    df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
+if "Release Date" not in df.columns:
+    df["Release Date"] = pd.NaT
+if "GR/Mail Object" not in df.columns:
+    df["GR/Mail Object"] = ""
 
 eom_df = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
 
@@ -169,17 +181,98 @@ if st.session_state.section == "Projects":
                 pass
 
     with col_actions:
-        c1, c2, c3 = st.columns(3)
-        if c1.button("✏️ Edit"):
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button("🔍 Filters"):
+            st.session_state.show_filters = not st.session_state.show_filters
+            st.rerun()
+        if c2.button("✏️ Edit"):
             st.session_state.edit_mode = not st.session_state.edit_mode
             st.rerun()
-        if c2.button("➕ Project"):
+        if c3.button("➕ Project"):
             st.session_state.add_project = True
             st.session_state.task_boxes = 1
             st.rerun()
-        if c3.button("➖ Delete"):
+        if c4.button("➖ Delete"):
             st.session_state.delete_mode = not st.session_state.delete_mode
             st.rerun()
+
+    # ======================================================
+    # FILTERS SECTION
+    # ======================================================
+    if st.session_state.show_filters and len(df) > 0:
+        with st.expander("🔍 Filters", expanded=True):
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                areas = ["All"] + sorted(df["Area"].dropna().unique().tolist())
+                selected_area = st.selectbox("Area", areas, key="filter_area")
+            
+            with col2:
+                owners = ["All"] + sorted(df["Owner"].dropna().unique().tolist())
+                selected_owner = st.selectbox("Owner", owners, key="filter_owner")
+            
+            with col3:
+                statuses = ["All"] + progress_values
+                selected_status = st.selectbox("Status", statuses, key="filter_status")
+            
+            with col4:
+                priorities = ["All", "Low", "Important", "Urgent"]
+                selected_priority = st.selectbox("Priority", priorities, key="filter_priority")
+            
+            col5, col6, col7 = st.columns(3)
+            
+            with col5:
+                due_filter = st.selectbox("Due Date", ["All", "Overdue", "This Week", "This Month", "No Date"], key="filter_due")
+            
+            with col6:
+                projects = ["All"] + sorted(df["Project"].dropna().unique().tolist())
+                selected_project = st.selectbox("Project", projects, key="filter_project")
+            
+            with col7:
+                if st.button("🔄 Reset Filters", use_container_width=True):
+                    st.session_state.filter_area = "All"
+                    st.session_state.filter_owner = "All"
+                    st.session_state.filter_status = "All"
+                    st.session_state.filter_priority = "All"
+                    st.session_state.filter_due = "All"
+                    st.session_state.filter_project = "All"
+                    st.rerun()
+        
+        # Apply filters
+        filtered_df = df.copy()
+        
+        if selected_area != "All":
+            filtered_df = filtered_df[filtered_df["Area"] == selected_area]
+        
+        if selected_owner != "All":
+            filtered_df = filtered_df[filtered_df["Owner"] == selected_owner]
+        
+        if selected_status != "All":
+            filtered_df = filtered_df[filtered_df["Progress"] == selected_status]
+        
+        if selected_priority != "All":
+            filtered_df = filtered_df[filtered_df["Priority"] == selected_priority]
+        
+        if selected_project != "All":
+            filtered_df = filtered_df[filtered_df["Project"] == selected_project]
+        
+        if due_filter != "All":
+            today = pd.Timestamp(date.today())
+            if due_filter == "Overdue":
+                filtered_df = filtered_df[filtered_df["Due Date"] < today]
+            elif due_filter == "This Week":
+                week_end = today + pd.Timedelta(days=7)
+                filtered_df = filtered_df[(filtered_df["Due Date"] >= today) & (filtered_df["Due Date"] <= week_end)]
+            elif due_filter == "This Month":
+                month_end = today + pd.offsets.MonthEnd(0)
+                filtered_df = filtered_df[(filtered_df["Due Date"] >= today) & (filtered_df["Due Date"] <= month_end)]
+            elif due_filter == "No Date":
+                filtered_df = filtered_df[filtered_df["Due Date"].isna()]
+        
+        df = filtered_df
+        
+        st.info(f"📊 Showing {len(df)} of {len(load_csv(DATA_PATH, PROJECT_COLUMNS, date_cols=['Release Date', 'Due Date']))} tasks")
+        st.divider()
 
     # ======================================================
     # ➕ ADD PROJECT
@@ -196,11 +289,23 @@ if st.session_state.section == "Projects":
                 st.markdown(f"**Task {i+1}**")
                 t = st.text_input("Task", key=f"new_task_{i}")
                 o = st.text_input("Owner (optional)", key=f"new_owner_{i}")
-                p = st.selectbox("Status", progress_values, key=f"new_prog_{i}")
-                pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"new_prio_{i}")
-                d = st.date_input("Due Date", value=date.today(), key=f"new_due_{i}")
+                
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    p = st.selectbox("Status", progress_values, key=f"new_prog_{i}")
+                with col_b:
+                    pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"new_prio_{i}")
+                
+                col_c, col_d = st.columns(2)
+                with col_c:
+                    r = st.date_input("Release Date (optional)", value=None, key=f"new_rel_{i}")
+                with col_d:
+                    d = st.date_input("Due Date (optional)", value=None, key=f"new_due_{i}")
+                
+                gr = st.text_area("GR/Mail Object (optional)", key=f"new_gr_{i}", height=80)
+                
                 if t:
-                    tasks.append((t, o, p, pr, d))
+                    tasks.append((t, o, p, pr, r, d, gr))
                 st.divider()
 
         col1, col2, col3 = st.columns(3)
@@ -215,7 +320,7 @@ if st.session_state.section == "Projects":
                 st.error("❌ Add at least one task!")
             else:
                 new_rows = []
-                for t, o, p, pr, d in tasks:
+                for t, o, p, pr, r, d, gr in tasks:
                     new_rows.append({
                         "Area": area,
                         "Project": project,
@@ -223,8 +328,9 @@ if st.session_state.section == "Projects":
                         "Owner": o,
                         "Progress": p,
                         "Priority": pr,
-                        "Release Date": pd.Timestamp(date.today()),
-                        "Due Date": pd.Timestamp(d)
+                        "Release Date": pd.Timestamp(r) if r else pd.NaT,
+                        "Due Date": pd.Timestamp(d) if d else pd.NaT,
+                        "GR/Mail Object": gr
                     })
                 
                 df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
@@ -315,7 +421,16 @@ if st.session_state.section == "Projects":
                         with cols[0]:
                             st.markdown(f"**{r['Task']}**")
                             st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
-                            st.write(f"🎯 Priority: {r['Priority']} | 📅 Due: {r['Due Date'].date()}")
+                            
+                            # Dates info
+                            release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
+                            due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
+                            st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
+                            
+                            # GR/Mail Object
+                            if r.get('GR/Mail Object') and r['GR/Mail Object']:
+                                with st.expander("📧 GR/Mail Object"):
+                                    st.text(r['GR/Mail Object'])
 
                             current_status = r["Progress"]
                             status = st.radio(
@@ -352,21 +467,39 @@ if st.session_state.section == "Projects":
                             st.markdown(f"**Task #{idx}**")
                             t = st.text_input("Task", row["Task"], key=f"t_{idx}")
                             o = st.text_input("Owner (optional)", row["Owner"] if row["Owner"] else "", key=f"o_{idx}")
-                            p = st.selectbox(
-                                "Status",
-                                progress_values,
-                                index=progress_values.index(row["Progress"]),
-                                key=f"p_{idx}"
-                            )
-                            pr = st.selectbox(
-                                "Priority",
-                                ["Low", "Important", "Urgent"],
-                                index=["Low", "Important", "Urgent"].index(row["Priority"]),
-                                key=f"pr_{idx}"
-                            )
-                            d = st.date_input("Due Date", row["Due Date"], key=f"d_{idx}")
+                            
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                p = st.selectbox(
+                                    "Status",
+                                    progress_values,
+                                    index=progress_values.index(row["Progress"]),
+                                    key=f"p_{idx}"
+                                )
+                            with col_b:
+                                pr = st.selectbox(
+                                    "Priority",
+                                    ["Low", "Important", "Urgent"],
+                                    index=["Low", "Important", "Urgent"].index(row["Priority"]),
+                                    key=f"pr_{idx}"
+                                )
+                            
+                            col_c, col_d = st.columns(2)
+                            with col_c:
+                                r = st.date_input("Release Date", 
+                                                 row["Release Date"] if pd.notna(row["Release Date"]) else None, 
+                                                 key=f"r_{idx}")
+                            with col_d:
+                                d = st.date_input("Due Date", 
+                                                 row["Due Date"] if pd.notna(row["Due Date"]) else None, 
+                                                 key=f"d_{idx}")
+                            
+                            gr = st.text_area("GR/Mail Object (optional)", 
+                                            row.get("GR/Mail Object", ""), 
+                                            key=f"gr_{idx}", 
+                                            height=80)
 
-                            updated_rows.append((idx, t, o, p, pr, d))
+                            updated_rows.append((idx, t, o, p, pr, r, d, gr))
                             st.divider()
 
                     st.markdown("### ➕ Add new tasks to this project")
@@ -381,11 +514,23 @@ if st.session_state.section == "Projects":
                             st.markdown(f"**New Task {i+1}**")
                             t = st.text_input("Task", key=f"nt_{project}_{i}")
                             o = st.text_input("Owner (optional)", key=f"no_{project}_{i}")
-                            p = st.selectbox("Status", progress_values, key=f"np_{project}_{i}")
-                            pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_{project}_{i}")
-                            d = st.date_input("Due Date", value=date.today(), key=f"nd_{project}_{i}")
+                            
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                p = st.selectbox("Status", progress_values, key=f"np_{project}_{i}")
+                            with col_b:
+                                pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_{project}_{i}")
+                            
+                            col_c, col_d = st.columns(2)
+                            with col_c:
+                                r = st.date_input("Release Date (optional)", value=None, key=f"nr_{project}_{i}")
+                            with col_d:
+                                d = st.date_input("Due Date (optional)", value=None, key=f"nd_{project}_{i}")
+                            
+                            gr = st.text_area("GR/Mail Object (optional)", key=f"ngr_{project}_{i}", height=80)
+                            
                             if t:
-                                new_tasks.append((t, o, p, pr, d))
+                                new_tasks.append((t, o, p, pr, r, d, gr))
                             st.divider()
 
                     col1, col2, col3 = st.columns(3)
@@ -397,15 +542,17 @@ if st.session_state.section == "Projects":
                         df.loc[df["Project"] == project, "Area"] = new_area
                         df.loc[df["Project"] == project, "Project"] = new_name
 
-                        for idx, t, o, p, pr, d in updated_rows:
+                        for idx, t, o, p, pr, r, d, gr in updated_rows:
                             df.loc[idx, "Task"] = t
                             df.loc[idx, "Owner"] = o
                             df.loc[idx, "Progress"] = p
                             df.loc[idx, "Priority"] = pr
-                            df.loc[idx, "Due Date"] = pd.Timestamp(d)
+                            df.loc[idx, "Release Date"] = pd.Timestamp(r) if r else pd.NaT
+                            df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
+                            df.loc[idx, "GR/Mail Object"] = gr
 
                         new_rows = []
-                        for t, o, p, pr, d in new_tasks:
+                        for t, o, p, pr, r, d, gr in new_tasks:
                             new_rows.append({
                                 "Area": new_area,
                                 "Project": new_name,
@@ -413,8 +560,9 @@ if st.session_state.section == "Projects":
                                 "Owner": o,
                                 "Progress": p,
                                 "Priority": pr,
-                                "Release Date": pd.Timestamp(date.today()),
-                                "Due Date": pd.Timestamp(d)
+                                "Release Date": pd.Timestamp(r) if r else pd.NaT,
+                                "Due Date": pd.Timestamp(d) if d else pd.NaT,
+                                "GR/Mail Object": gr
                             })
                         
                         if new_rows:
@@ -481,20 +629,76 @@ if st.session_state.section == "EOM":
                     completed_cols.append(col)
 
     # HEADER WITH ACTIONS
-    col1, col2, col3 = st.columns([4, 1, 1])
+    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     with col1:
         st.caption(f"🎯 **Current working month**: {current_month_col}")
     with col2:
-        if st.button("✏️ Edit Mode" if not st.session_state.eom_edit_mode else "✅ View Mode", 
+        if st.button("🔍 Filters" if not st.session_state.show_eom_filters else "🔍 Hide", 
+                     use_container_width=True):
+            st.session_state.show_eom_filters = not st.session_state.show_eom_filters
+            st.rerun()
+    with col3:
+        if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
                      use_container_width=True):
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
-    with col3:
-        if completed_cols:
-            show_text = f"👁️ Show Completed ({len(completed_cols)})" if not st.session_state.show_completed_months else f"🔒 Hide Completed ({len(completed_cols)})"
-            if st.button(show_text, use_container_width=True):
-                st.session_state.show_completed_months = not st.session_state.show_completed_months
+    with col4:
+        if st.button("🗑️ Bulk Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel", 
+                     use_container_width=True):
+            st.session_state.eom_bulk_delete = not st.session_state.eom_bulk_delete
+            st.rerun()
+
+    # ======================================================
+    # FILTERS SECTION FOR EOM
+    # ======================================================
+    if st.session_state.show_eom_filters and len(eom_df) > 0:
+        with st.expander("🔍 Filters", expanded=True):
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                eom_areas = ["All"] + sorted(eom_df["Area"].dropna().unique().tolist())
+                selected_eom_area = st.selectbox("Area", eom_areas, key="filter_eom_area")
+            
+            with col2:
+                eom_macros = ["All"] + sorted(eom_df["ID Macro"].dropna().unique().tolist())
+                selected_eom_macro = st.selectbox("ID Macro", eom_macros, key="filter_eom_macro")
+            
+            with col3:
+                eom_micros = ["All"] + sorted(eom_df["ID Micro"].dropna().unique().tolist())
+                selected_eom_micro = st.selectbox("ID Micro", eom_micros, key="filter_eom_micro")
+            
+            with col4:
+                completion_filter = st.selectbox("Current Month Status", 
+                                                ["All", "Completed", "Not Completed"], 
+                                                key="filter_eom_status")
+            
+            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_eom_filters"):
+                st.session_state.filter_eom_area = "All"
+                st.session_state.filter_eom_macro = "All"
+                st.session_state.filter_eom_micro = "All"
+                st.session_state.filter_eom_status = "All"
                 st.rerun()
+        
+        # Apply filters
+        filtered_eom_df = eom_df.copy()
+        
+        if selected_eom_area != "All":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df["Area"] == selected_eom_area]
+        
+        if selected_eom_macro != "All":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df["ID Macro"] == selected_eom_macro]
+        
+        if selected_eom_micro != "All":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df["ID Micro"] == selected_eom_micro]
+        
+        if completion_filter == "Completed":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == True]
+        elif completion_filter == "Not Completed":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == False]
+        
+        eom_df = filtered_eom_df
+        
+        st.info(f"📊 Showing {len(eom_df)} of {len(load_csv(EOM_PATH, EOM_BASE_COLUMNS))} activities")
 
     st.divider()
 
@@ -598,9 +802,49 @@ if st.session_state.section == "EOM":
         st.divider()
 
     # ======================================================
-    # TABLE VIEW (NON EDIT MODE)
+    # BULK DELETE MODE
     # ======================================================
-    if not st.session_state.eom_edit_mode and len(eom_df) > 0:
+    if st.session_state.eom_bulk_delete and len(eom_df) > 0:
+        st.warning("🗑️ **Bulk Delete Mode**: Select activities to delete")
+        
+        selected_to_delete = []
+        for idx, row in eom_df.iterrows():
+            col1, col2 = st.columns([1, 10])
+            with col1:
+                if st.checkbox("", key=f"bulk_select_{idx}"):
+                    selected_to_delete.append(idx)
+            with col2:
+                st.write(f"**{row['Activity']}** ({row['Area']} - {row['ID Macro']}/{row['ID Micro']})")
+        
+        st.divider()
+        
+        if selected_to_delete:
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
+                    eom_df = eom_df.drop(selected_to_delete).reset_index(drop=True)
+                    save_csv(eom_df, EOM_PATH)
+                    st.success(f"✅ {len(selected_to_delete)} activities deleted!")
+                    st.session_state.eom_bulk_delete = False
+                    st.rerun()
+        else:
+            st.info("👆 Select activities above to delete them")
+        
+        st.divider()
+
+    # ======================================================
+    # TABLE VIEW (NON EDIT MODE & NON BULK DELETE)
+    # ======================================================
+    if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) > 0:
+        # Show/hide completed columns toggle
+        if completed_cols:
+            col_left, col_right = st.columns([4, 1])
+            with col_right:
+                show_text = f"👁️ Show Completed ({len(completed_cols)})" if not st.session_state.show_completed_months else f"🔒 Hide Completed"
+                if st.button(show_text, use_container_width=True, key="toggle_completed"):
+                    st.session_state.show_completed_months = not st.session_state.show_completed_months
+                    st.rerun()
+        
         # Determina quali colonne mostrare
         visible_cols = month_cols.copy()
         
@@ -685,7 +929,7 @@ if st.session_state.section == "EOM":
                 else:
                     st.caption(f"⚪ {month_name}: {pct}%")
 
-    elif not st.session_state.eom_edit_mode and len(eom_df) == 0:
+    elif not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) == 0:
         st.info("📝 No End-of-Month activities yet. Add your first activity above!")
 
     # Footer con info
