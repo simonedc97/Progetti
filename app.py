@@ -24,26 +24,23 @@ COLUMNS = [
 ]
 
 # -------------------------
-# SESSION STATE INIT
+# SESSION STATE
 # -------------------------
-if "user" not in st.session_state:
-    st.session_state.user = None
-
-if "edit_mode" not in st.session_state:
-    st.session_state.edit_mode = False
+st.session_state.setdefault("user", None)
+st.session_state.setdefault("edit_mode", False)
+st.session_state.setdefault("add_project", False)
 
 # -------------------------
-# LOGIN (NETFLIX STYLE)
+# LOGIN
 # -------------------------
 if st.session_state.user is None:
-    st.title("👤 Who's watching?")
-    cols = st.columns(len(USERS))
+    st.title("🔐 Login")
 
-    for col, user in zip(cols, USERS):
-        with col:
-            if st.button(user, use_container_width=True):
-                st.session_state.user = user
-                st.rerun()
+    user = st.selectbox("Select user", USERS)
+
+    if st.button("Login"):
+        st.session_state.user = user
+        st.rerun()
 
     st.stop()
 
@@ -74,6 +71,9 @@ def area_color(area):
     h = int(hashlib.md5(area.encode()).hexdigest(), 16)
     return f"#{h % 0xFFFFFF:06x}"
 
+def split_tasks(text):
+    return [t.strip() for t in text.split("\n") if t.strip()]
+
 # -------------------------
 # HEADER
 # -------------------------
@@ -90,26 +90,39 @@ with col_actions:
         st.session_state.add_project = True
 
 # -------------------------
-# ADD PROJECT
+# ADD PROJECT (MULTI-TASK)
 # -------------------------
-if st.session_state.get("add_project", False):
+if st.session_state.add_project:
     with st.form("add_project"):
         st.subheader("➕ New Project")
+
         area = st.text_input("Area")
         project = st.text_input("Project name")
 
+        tasks_text = st.text_area(
+            "Tasks (one per line)",
+            placeholder="Task 1\nTask 2\nTask 3"
+        )
+
+        owner = st.text_input("Owner", value=st.session_state.user)
+        priority = st.selectbox("Priority", ["Low", "Important", "Urgent"])
+        due = st.date_input("Due Date", value=date.today())
+
         if st.form_submit_button("Create project"):
-            new_row = {
-                "Area": area,
-                "Project": project,
-                "Task": "",
-                "Owner": "",
-                "Progress": "Not started",
-                "Priority": "Low",
-                "Release Date": date.today(),
-                "Due Date": date.today()
-            }
-            df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+            tasks = split_tasks(tasks_text)
+
+            for task in tasks:
+                df = pd.concat([df, pd.DataFrame([{
+                    "Area": area,
+                    "Project": project,
+                    "Task": task,
+                    "Owner": owner,
+                    "Progress": "Not started",
+                    "Priority": priority,
+                    "Release Date": date.today(),
+                    "Due Date": due
+                }])], ignore_index=True)
+
             os.makedirs("data", exist_ok=True)
             df.to_csv(DATA_PATH, index=False)
             st.session_state.add_project = False
@@ -144,13 +157,8 @@ else:
 
             st.progress(completion / 100)
 
-            # -------------------------
             # TASK LIST
-            # -------------------------
-            for idx, row in proj_df.iterrows():
-                if row["Task"] == "":
-                    continue
-
+            for _, row in proj_df.iterrows():
                 col1, col2, col3, col4, col5 = st.columns([3,2,2,2,1])
                 col1.markdown(f"**{row['Task']}**")
                 col2.write(row["Owner"])
@@ -159,48 +167,70 @@ else:
                 col5.write(row["Due Date"].date())
 
             # -------------------------
-            # ADD TASK
+            # ADD TASK (MULTILINE)
             # -------------------------
-            with st.form(f"add_task_{project}", clear_on_submit=True):
-                st.markdown("### ➕ Add task")
+            with st.form(f"add_task_{project}"):
+                st.markdown("### ➕ Add tasks")
 
-                col1, col2, col3 = st.columns(3)
-                task = col1.text_input("Task")
-                owner = col2.text_input("Owner", value=st.session_state.user)
-                priority = col3.selectbox("Priority", ["Low", "Important", "Urgent"])
+                tasks_text = st.text_area(
+                    "Tasks (one per line)",
+                    placeholder="New task 1\nNew task 2"
+                )
 
-                col4, col5, col6 = st.columns(3)
-                progress = col4.selectbox("Status", ["Not started", "In progress", "Completed"])
-                release = col5.date_input("Release Date", value=date.today())
-                due = col6.date_input("Due Date")
+                owner = st.text_input("Owner", value=st.session_state.user)
+                priority = st.selectbox("Priority", ["Low", "Important", "Urgent"])
+                progress = st.selectbox("Status", ["Not started", "In progress", "Completed"])
+                due = st.date_input("Due Date", value=date.today())
 
                 if st.form_submit_button("Add"):
-                    new_row = {
-                        "Area": area,
-                        "Project": project,
-                        "Task": task,
-                        "Owner": owner,
-                        "Progress": progress,
-                        "Priority": priority,
-                        "Release Date": release,
-                        "Due Date": due
-                    }
-                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
+                    tasks = split_tasks(tasks_text)
+
+                    for task in tasks:
+                        df = pd.concat([df, pd.DataFrame([{
+                            "Area": area,
+                            "Project": project,
+                            "Task": task,
+                            "Owner": owner,
+                            "Progress": progress,
+                            "Priority": priority,
+                            "Release Date": date.today(),
+                            "Due Date": due
+                        }])], ignore_index=True)
+
                     df.to_csv(DATA_PATH, index=False)
                     st.rerun()
 
             # -------------------------
-            # EDIT PROJECT
+            # EDIT PROJECT (MULTI-TASK)
             # -------------------------
             if st.session_state.edit_mode:
                 st.markdown("### ✏️ Edit project")
 
                 new_area = st.text_input("Area", area, key=f"area_{project}")
-                new_project = st.text_input("Project name", project, key=f"name_{project}")
+                new_name = st.text_input("Project name", project, key=f"name_{project}")
+
+                new_tasks = st.text_area(
+                    "Add new tasks (one per line)",
+                    placeholder="Extra task 1\nExtra task 2",
+                    key=f"tasks_{project}"
+                )
 
                 if st.button("Save changes", key=f"save_{project}"):
                     df.loc[df["Project"] == project, "Area"] = new_area
-                    df.loc[df["Project"] == project, "Project"] = new_project
+                    df.loc[df["Project"] == project, "Project"] = new_name
+
+                    for task in split_tasks(new_tasks):
+                        df = pd.concat([df, pd.DataFrame([{
+                            "Area": new_area,
+                            "Project": new_name,
+                            "Task": task,
+                            "Owner": st.session_state.user,
+                            "Progress": "Not started",
+                            "Priority": "Low",
+                            "Release Date": date.today(),
+                            "Due Date": date.today()
+                        }])], ignore_index=True)
+
                     df.to_csv(DATA_PATH, index=False)
                     st.success("Project updated")
                     st.rerun()
