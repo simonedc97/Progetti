@@ -139,40 +139,57 @@ if not st.session_state.add_project:
             st.progress(completion / 100)
 
             # --------------------------------------------------
-            # TASK VIEW (INLINE STATUS EDIT ✅) su una sola riga cliccabile
+            # TASK VIEW (INLINE STATUS EDIT ✅)
             # --------------------------------------------------
+            status_colors = {"Not started": "#ff4d4d", "In progress": "#ffcc00", "Completed": "#2ecc71"}
+
             for idx, r in proj_df.iterrows():
                 with st.container():
                     st.markdown(f"**{r['Task']}**")
                     st.write(f"Owner: {r['Owner'] or '—'}")
                     st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
-                    st.write("Status:")
 
-                    status_colors = {"Not started": "#ff4d4d", "In progress": "#ffcc00", "Completed": "#2ecc71"}
                     cols = st.columns(3)
-                    for i, (label, value) in enumerate(zip(["🔴 Not started", "🟡 In progress", "🟢 Completed"],
-                                                           ["Not started", "In progress", "Completed"])):
+                    for i, (label, value) in enumerate(zip(
+                        ["🔴 Not started", "🟡 In progress", "🟢 Completed"],
+                        ["Not started", "In progress", "Completed"]
+                    )):
                         with cols[i]:
-                            # Se è lo stato attuale, colore attivo; altrimenti grigio
+                            # Se è lo stato attuale, colore attivo; altrimenti grigio chiaro
                             color = status_colors[value] if r["Progress"] == value else "#f0f0f0"
                             text_color = "white" if r["Progress"] == value else "black"
-                            clicked = st.button(label, key=f"status_{idx}_{value}", use_container_width=True)
+
+                            clicked = st.button(
+                                label,
+                                key=f"status_{idx}_{value}",
+                                use_container_width=True
+                            )
                             if clicked:
                                 df.loc[idx, "Progress"] = value
                                 df.to_csv(DATA_PATH, index=False)
                                 st.rerun()
-                            # Aggiorna lo stile del bottone colorato
+
+                            # Stile dinamico bottone
                             st.markdown(
-                                f"<div style='display:none;background-color:{color};color:{text_color};border-radius:6px;padding:6px;width:100%;'></div>",
+                                f"""
+                                <style>
+                                div.stButton > button:first-child {{
+                                    background-color: {color};
+                                    color: {text_color};
+                                    border-radius: 6px;
+                                    padding: 6px;
+                                    width: 100%;
+                                }}
+                                </style>
+                                """,
                                 unsafe_allow_html=True
                             )
 
             # ==================================================
-            # ✏️ EDIT PROJECT (COMPLETO)
+            # ✏️ EDIT PROJECT
             # ==================================================
             if st.session_state.edit_mode:
                 st.markdown("### ✏️ Edit project")
-
                 new_area = st.text_input("Area", area, key=f"ea_{project}")
                 new_name = st.text_input("Project name", project, key=f"ep_{project}")
 
@@ -215,7 +232,6 @@ if not st.session_state.add_project:
                             new_tasks.append((t, o, p, pr, d))
 
                 col1, col2, col3 = st.columns(3)
-
                 if col1.button("➕ Add task", key=f"add_{project}"):
                     st.session_state[add_key] += 1
                     st.rerun()
