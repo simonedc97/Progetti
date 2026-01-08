@@ -57,6 +57,7 @@ else:
 # -------------------------
 # HELPERS
 # -------------------------
+progress_values = ["Not started", "In progress", "Completed"]
 progress_score = {"Not started": 0, "In progress": 0.5, "Completed": 1}
 status_icon = {"Completed": "🟢", "In progress": "🟡", "Not started": "🔴"}
 
@@ -93,7 +94,7 @@ if st.session_state.add_project:
         with st.container(border=True):
             t = st.text_input("Task", key=f"new_task_{i}")
             o = st.text_input("Owner (optional)", key=f"new_owner_{i}")
-            p = st.selectbox("Status", progress_score.keys(), key=f"new_prog_{i}")
+            p = st.selectbox("Status", progress_values, key=f"new_prog_{i}")
             pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"new_prio_{i}")
             d = st.date_input("Due Date", value=date.today(), key=f"new_due_{i}")
             if t:
@@ -116,6 +117,7 @@ if st.session_state.add_project:
                 "Release Date": date.today(),
                 "Due Date": d
             }])], ignore_index=True)
+
         os.makedirs("data", exist_ok=True)
         df.to_csv(DATA_PATH, index=False)
         st.session_state.add_project = False
@@ -127,7 +129,7 @@ if st.session_state.add_project:
         st.rerun()
 
 # ======================================================
-# 📁 PROJECT VIEW + EDIT
+# 📁 PROJECT VIEW
 # ======================================================
 if not st.session_state.add_project:
     for project, proj_df in df.groupby("Project"):
@@ -137,14 +139,30 @@ if not st.session_state.add_project:
         with st.expander(f"📁 {project} — {completion}%"):
             st.progress(completion / 100)
 
-            # TASK VIEW
-            for _, r in proj_df.iterrows():
+            # --------------------------------------------------
+            # TASK VIEW (INLINE STATUS EDIT ✅)
+            # --------------------------------------------------
+            for idx, r in proj_df.iterrows():
                 with st.container(border=True):
                     st.markdown(f"**{r['Task']}**")
                     st.write(f"Owner: {r['Owner'] or '—'}")
-                    st.write(f"{status_icon[r['Progress']]} {r['Progress']} | {r['Priority']} | Due {r['Due Date'].date()}")
+                    st.write(f"Priority: {r['Priority']} | Due: {r['Due Date'].date()}")
 
-            # ================= EDIT MODE =================
+                    new_status = st.selectbox(
+                        "Status",
+                        progress_values,
+                        index=progress_values.index(r["Progress"]),
+                        key=f"status_inline_{idx}"
+                    )
+
+                    if new_status != r["Progress"]:
+                        df.loc[idx, "Progress"] = new_status
+                        df.to_csv(DATA_PATH, index=False)
+                        st.rerun()
+
+            # ==================================================
+            # ✏️ EDIT PROJECT (COMPLETO)
+            # ==================================================
             if st.session_state.edit_mode:
                 st.markdown("### ✏️ Edit project")
 
@@ -158,12 +176,18 @@ if not st.session_state.add_project:
                     with st.container(border=True):
                         t = st.text_input("Task", row["Task"], key=f"t_{idx}")
                         o = st.text_input("Owner (optional)", row["Owner"], key=f"o_{idx}")
-                        p = st.selectbox("Status", progress_score.keys(),
-                                         index=list(progress_score).index(row["Progress"]),
-                                         key=f"p_{idx}")
-                        pr = st.selectbox("Priority", ["Low", "Important", "Urgent"],
-                                          index=["Low", "Important", "Urgent"].index(row["Priority"]),
-                                          key=f"pr_{idx}")
+                        p = st.selectbox(
+                            "Status",
+                            progress_values,
+                            index=progress_values.index(row["Progress"]),
+                            key=f"p_{idx}"
+                        )
+                        pr = st.selectbox(
+                            "Priority",
+                            ["Low", "Important", "Urgent"],
+                            index=["Low", "Important", "Urgent"].index(row["Priority"]),
+                            key=f"pr_{idx}"
+                        )
                         d = st.date_input("Due Date", row["Due Date"], key=f"d_{idx}")
 
                         updated_rows.append((idx, t, o, p, pr, d))
@@ -177,7 +201,7 @@ if not st.session_state.add_project:
                     with st.container(border=True):
                         t = st.text_input("Task", key=f"nt_{project}_{i}")
                         o = st.text_input("Owner (optional)", key=f"no_{project}_{i}")
-                        p = st.selectbox("Status", progress_score.keys(), key=f"np_{project}_{i}")
+                        p = st.selectbox("Status", progress_values, key=f"np_{project}_{i}")
                         pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_{project}_{i}")
                         d = st.date_input("Due Date", value=date.today(), key=f"nd_{project}_{i}")
                         if t:
