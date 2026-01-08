@@ -14,12 +14,12 @@ EOM_PATH = "data/eom_activities.csv"
 
 PROJECT_COLUMNS = [
     "Area", "Project", "Task", "Owner",
-    "Progress", "Priority", "Release Date", "Due Date", "GR/Mail Object"
+    "Progress", "Priority", "Release Date", "Due Date", "GR/Mail Object", "Last Update"
 ]
 
 EOM_BASE_COLUMNS = [
     "Area", "ID Macro", "ID Micro",
-    "Activity", "Frequency", "Files", "🗑️ Delete"
+    "Activity", "Frequency", "Files", "🗑️ Delete", "Last Update"
 ]
 
 # =========================
@@ -147,8 +147,12 @@ if "Release Date" not in df.columns:
     df["Release Date"] = pd.NaT
 if "GR/Mail Object" not in df.columns:
     df["GR/Mail Object"] = ""
+if "Last Update" not in df.columns:
+    df["Last Update"] = pd.Timestamp.now()
 
 eom_df = load_csv(EOM_PATH, EOM_BASE_COLUMNS)
+if "Last Update" not in eom_df.columns:
+    eom_df["Last Update"] = pd.Timestamp.now()
 
 # =========================
 # HEADER + NAVIGATION
@@ -179,10 +183,14 @@ if st.session_state.section == "Projects":
         st.subheader("📊 Projects Activities")
         if len(df) > 0:
             try:
-                last_update = pd.to_datetime(df["Release Date"]).max()
-                st.caption(f"🕒 Last update: {last_update.strftime('%d/%m/%Y')}")
+                # Usa il timestamp attuale salvato nel CSV o l'ultima modifica
+                if "Last Update" in df.columns and pd.notna(df["Last Update"].iloc[0]):
+                    last_update = pd.to_datetime(df["Last Update"]).max()
+                else:
+                    last_update = pd.Timestamp.now()
+                st.caption(f"🕒 Last update: {last_update.strftime('%d/%m/%Y %H:%M')}")
             except:
-                pass
+                st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
 
     with col_actions:
         c1, c2, c3, c4 = st.columns(4)
@@ -342,7 +350,8 @@ if st.session_state.section == "Projects":
                         "Priority": pr,
                         "Release Date": pd.Timestamp(r) if r else pd.NaT,
                         "Due Date": pd.Timestamp(d) if d else pd.NaT,
-                        "GR/Mail Object": gr
+                        "GR/Mail Object": gr,
+                        "Last Update": pd.Timestamp.now()
                     })
                 
                 df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
@@ -455,6 +464,7 @@ if st.session_state.section == "Projects":
                             
                             if status != current_status:
                                 df.loc[idx, "Progress"] = status
+                                df.loc[idx, "Last Update"] = pd.Timestamp.now()
                                 save_csv(df, DATA_PATH)
                                 st.rerun()
 
@@ -553,6 +563,7 @@ if st.session_state.section == "Projects":
                     if col2.button("💾 Save changes", key=f"save_{project}", type="primary"):
                         df.loc[df["Project"] == project, "Area"] = new_area
                         df.loc[df["Project"] == project, "Project"] = new_name
+                        df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now()
 
                         for idx, t, o, p, pr, r, d, gr in updated_rows:
                             df.loc[idx, "Task"] = t
@@ -562,6 +573,7 @@ if st.session_state.section == "Projects":
                             df.loc[idx, "Release Date"] = pd.Timestamp(r) if r else pd.NaT
                             df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
                             df.loc[idx, "GR/Mail Object"] = gr
+                            df.loc[idx, "Last Update"] = pd.Timestamp.now()
 
                         new_rows = []
                         for t, o, p, pr, r, d, gr in new_tasks:
@@ -574,7 +586,8 @@ if st.session_state.section == "Projects":
                                 "Priority": pr,
                                 "Release Date": pd.Timestamp(r) if r else pd.NaT,
                                 "Due Date": pd.Timestamp(d) if d else pd.NaT,
-                                "GR/Mail Object": gr
+                                "GR/Mail Object": gr,
+                                "Last Update": pd.Timestamp.now()
                             })
                         
                         if new_rows:
@@ -609,6 +622,14 @@ if st.session_state.section == "Projects":
 if st.session_state.section == "EOM":
 
     st.subheader("📅 End of Month Activities")
+    
+    # Display last update
+    if len(eom_df) > 0 and "Last Update" in eom_df.columns:
+        try:
+            last_update_eom = pd.to_datetime(eom_df["Last Update"]).max()
+            st.caption(f"🕒 Last update: {last_update_eom.strftime('%d/%m/%Y %H:%M')}")
+        except:
+            st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
 
     # Calcola i mesi (include mese precedente come corrente)
     months = get_next_months(6, include_previous=True)
@@ -763,7 +784,8 @@ if st.session_state.section == "EOM":
                     "Activity": activity,
                     "Frequency": frequency,
                     "Files": files,
-                    "🗑️ Delete": False
+                    "🗑️ Delete": False,
+                    "Last Update": pd.Timestamp.now()
                 }
                 for c in month_cols:
                     row[c] = False
@@ -804,6 +826,7 @@ if st.session_state.section == "EOM":
                         eom_df.loc[idx, "Activity"] = new_activity
                         eom_df.loc[idx, "Frequency"] = new_freq
                         eom_df.loc[idx, "Files"] = new_files
+                        eom_df.loc[idx, "Last Update"] = pd.Timestamp.now()
                         save_csv(eom_df, EOM_PATH)
                         st.success(f"✅ Activity updated!")
                         st.rerun()
@@ -868,7 +891,7 @@ if st.session_state.section == "EOM":
             # Nascondi colonne completate
             visible_cols = [col for col in month_cols if col not in completed_cols]
         
-        # Crea subset del dataframe con solo colonne visibili
+        # Crea subset del dataframe con solo colonne visibili (escludi Last Update)
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols
         display_df = eom_df[display_cols].copy()
         
@@ -902,7 +925,10 @@ if st.session_state.section == "EOM":
         # Aggiorna solo le colonne dei mesi nel dataframe originale
         for col in visible_cols:
             if col in edited.columns:
-                eom_df[col] = edited[col]
+                # Controlla se ci sono state modifiche
+                if not edited[col].equals(eom_df[col]):
+                    eom_df[col] = edited[col]
+                    eom_df["Last Update"] = pd.Timestamp.now()
 
         # Salva automaticamente le modifiche
         save_csv(eom_df, EOM_PATH)
