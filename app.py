@@ -14,7 +14,7 @@ st.set_page_config(page_title="RM Insurance Planner", layout="wide")
 JSONBIN_API_KEY = "$2a$10$O1c.ADK9BgMXBYVzCnRe2eRnLiTVK4bd7Hqd7kRLMwIISia4UHBQa"
 JSONBIN_BIN_ID_PROJECTS = "69628091d0ea881f40626147"  # ⚠️ DA MODIFICARE
 JSONBIN_BIN_ID_EOM = "696280d9d0ea881f406261d7"  # ⚠️ DA MODIFICARE
-JSONBIN_BIN_ID_ATTENDANCE = "696280f9d0ea881f40626222 "  # ⚠️ DA MODIFICARE
+JSONBIN_BIN_ID_ATTENDANCE = "696280f9d0ea881f40626222"  # ⚠️ DA MODIFICARE
 
 PROJECT_COLUMNS = [
     "Area", "Project", "Task", "Owner",
@@ -43,8 +43,9 @@ def save_to_jsonbin(df, bin_id):
     for col in data_dict.columns:
         if data_dict[col].dtype == 'datetime64[ns]':
             data_dict[col] = data_dict[col].astype(str)
-        elif data_dict[col].dtype == 'bool':  # AGGIUNTO
-            data_dict[col] = data_dict[col].astype(str)  # AGGIUNTO
+            elif data_dict[col].dtype == 'bool':
+            data_dict[col] = data_dict[col]
+
     
     data_to_save = data_dict.to_dict('records')
     
@@ -479,7 +480,7 @@ if st.session_state.section == "Projects":
             if st.button("❌ Cancel", key=f"cancel_del_proj_{project}"):
                 st.session_state.confirm_delete_project = None
                 st.rerun()
-        st.stop()
+        return
 
     # ======================================================
     # CONFIRM DELETE TASK
@@ -503,18 +504,20 @@ if st.session_state.section == "Projects":
                 if st.button("❌ Cancel", key=f"cancel_del_task_{task_name}"):
                     st.session_state.confirm_delete_task = None
                     st.rerun()
-            st.stop()
+            return
 
     # ======================================================
     # 📁 PROJECT VIEW (parte non edit mode)
     # ======================================================
-    if not st.session_state.add_project and len(df) > 0:
-    if "Project" not in df.columns or len(df) == 0:  # AGGIUNTO
-        st.warning("⚠️ No projects found")  # AGGIUNTO
-    else:  # AGGIUNTO
-        in_progress_projects = []
-        in_progress_projects = []
-        completed_projects = []
+    # 📁 PROJECT VIEW (parte non edit mode)
+    if not st.session_state.add_project:
+
+        if "Project" not in df.columns or len(df) == 0:
+            st.warning("⚠️ No projects found")
+        else:
+            in_progress_projects = []
+            completed_projects = []
+
         
         for project in df["Project"].unique():
             proj_df = df[df["Project"] == project]
