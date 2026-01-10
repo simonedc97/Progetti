@@ -43,9 +43,6 @@ def save_to_jsonbin(df, bin_id):
     for col in data_dict.columns:
         if data_dict[col].dtype == 'datetime64[ns]':
             data_dict[col] = data_dict[col].astype(str)
-            elif data_dict[col].dtype == 'bool':
-            data_dict[col] = data_dict[col]
-
     
     data_to_save = data_dict.to_dict('records')
     
