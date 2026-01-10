@@ -14,7 +14,7 @@ st.set_page_config(page_title="RM Insurance Planner", layout="wide")
 JSONBIN_API_KEY = "$2a$10$O1c.ADK9BgMXBYVzCnRe2eRnLiTVK4bd7Hqd7kRLMwIISia4UHBQa"
 JSONBIN_BIN_ID_PROJECTS = "69628091d0ea881f40626147"  # ⚠️ DA MODIFICARE
 JSONBIN_BIN_ID_EOM = "696280d9d0ea881f406261d7"  # ⚠️ DA MODIFICARE
-JSONBIN_BIN_ID_ATTENDANCE = "INSERISCI_QUI_IL_BIN_ID_ATTENDANCE"  # ⚠️ DA MODIFICARE
+JSONBIN_BIN_ID_ATTENDANCE = "696280f9d0ea881f40626222 "  # ⚠️ DA MODIFICARE
 
 PROJECT_COLUMNS = [
     "Area", "Project", "Task", "Owner",
@@ -33,23 +33,27 @@ ATTENDANCE_TYPES = ["", "🏢 Office", "🏠 Smart Working", "🌴 Vacation", "�
 # JSONBIN FUNCTIONS
 # =========================
 def save_to_jsonbin(df, bin_id):
-    """Salva DataFrame su JSONBin"""
     url = f"https://api.jsonbin.io/v3/b/{bin_id}"
     headers = {
         "Content-Type": "application/json",
         "X-Master-Key": JSONBIN_API_KEY
     }
     
-    # Converti DataFrame in dict, gestendo date e NaT
     data_dict = df.copy()
     for col in data_dict.columns:
         if data_dict[col].dtype == 'datetime64[ns]':
             data_dict[col] = data_dict[col].astype(str)
+        elif data_dict[col].dtype == 'bool':  # AGGIUNTO
+            data_dict[col] = data_dict[col].astype(str)  # AGGIUNTO
     
     data_to_save = data_dict.to_dict('records')
     
-    response = requests.put(url, json=data_to_save, headers=headers)
-    return response.status_code == 200
+    try:  # AGGIUNTO
+        response = requests.put(url, json=data_to_save, headers=headers)
+        return response.status_code == 200
+    except Exception as e:  # AGGIUNTO
+        st.error(f"Error saving: {e}")  # AGGIUNTO
+        return False  # AGGIUNTO
 
 def load_from_jsonbin(bin_id, columns, date_cols=None):
     """Carica DataFrame da JSONBin"""
@@ -218,12 +222,13 @@ if "Order" not in eom_df.columns:
     eom_df["Order"] = range(len(eom_df))
 
 # Load attendance data
-attendance_df = load_from_jsonbin(JSONBIN_BIN_ID_ATTENDANCE, ["Date", "Member", "Type", "Notes"])
+attendance_df = load_from_jsonbin(JSONBIN_BIN_ID_ATTENDANCE, ["Date", "Member", "Type", "Notes"], date_cols=["Date"])
 if len(attendance_df) == 0:
     attendance_df = pd.DataFrame(columns=["Date", "Member", "Type", "Notes"])
-else:
-    if "Date" in attendance_df.columns:
-        attendance_df["Date"] = pd.to_datetime(attendance_df["Date"], errors='coerce')
+if "Date" in attendance_df.columns:
+    attendance_df["Date"] = pd.to_datetime(attendance_df["Date"], errors='coerce')
+if "Notes" in attendance_df.columns:  # AGGIUNTO
+    attendance_df["Notes"] = attendance_df["Notes"].fillna("")  # AGGIUNTO
 
 # =========================
 # HEADER + NAVIGATION
@@ -504,6 +509,10 @@ if st.session_state.section == "Projects":
     # 📁 PROJECT VIEW (parte non edit mode)
     # ======================================================
     if not st.session_state.add_project and len(df) > 0:
+    if "Project" not in df.columns or len(df) == 0:  # AGGIUNTO
+        st.warning("⚠️ No projects found")  # AGGIUNTO
+    else:  # AGGIUNTO
+        in_progress_projects = []
         in_progress_projects = []
         completed_projects = []
         
