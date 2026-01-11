@@ -26,27 +26,35 @@ EOM_BASE_COLUMNS = [
 ]
 
 # =========================
-# JSONBIN FUNCTIONS
+# JSONBIN FUNCTIONS - CORRETTE
 # =========================
 def save_to_jsonbin(df, bin_id):
-    """Salva DataFrame su JSONBin"""
+    """Salva DataFrame su JSONBin - VERSIONE CORRETTA"""
     url = f"https://api.jsonbin.io/v3/b/{bin_id}"
     headers = {
         "Content-Type": "application/json",
         "X-Master-Key": JSONBIN_API_KEY
     }
     
+    # Crea copia e gestisci date
     data_dict = df.copy()
     for col in data_dict.columns:
         if pd.api.types.is_datetime64_any_dtype(data_dict[col]):
-            data_dict[col] = data_dict[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-            data_dict[col] = data_dict[col].replace('NaT', '')
+            # Converti in stringa, gestendo NaT
+            data_dict[col] = data_dict[col].apply(
+                lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(x) else ''
+            )
     
+    # Converti in lista di dizionari
     data_to_save = data_dict.to_dict('records')
     
     try:
         response = requests.put(url, json=data_to_save, headers=headers)
-        return response.status_code == 200
+        if response.status_code == 200:
+            return True
+        else:
+            st.error(f"Save failed: {response.status_code}")
+            return False
     except Exception as e:
         st.error(f"Error saving: {e}")
         return False
@@ -183,23 +191,26 @@ def get_next_months(n=6, include_previous=True):
     return months
 
 # =========================
-# LOAD DATA
+# LOAD DATA - VERSIONE ROBUSTA
 # =========================
 df = load_from_jsonbin(JSONBIN_BIN_ID_PROJECTS, PROJECT_COLUMNS, date_cols=["Release Date", "Due Date"])
-if "Owner" in df.columns:
-    df["Owner"] = df["Owner"].fillna("")
-if "GR/Mail Object" in df.columns:
-    df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
-if "Release Date" not in df.columns:
-    df["Release Date"] = pd.NaT
-if "GR/Mail Object" not in df.columns:
-    df["GR/Mail Object"] = ""
-if "Notes" not in df.columns:
-    df["Notes"] = ""
-if "Last Update" not in df.columns:
-    df["Last Update"] = pd.Timestamp.now()
-if "Order" not in df.columns:
-    df["Order"] = range(len(df))
+
+# Assicura che TUTTE le colonne necessarie esistano
+for col in PROJECT_COLUMNS:
+    if col not in df.columns:
+        if col in ["Release Date", "Due Date"]:
+            df[col] = pd.NaT
+        elif col == "Last Update":
+            df[col] = pd.Timestamp.now()
+        elif col == "Order":
+            df[col] = range(len(df))
+        else:
+            df[col] = ""
+
+# Pulisci i valori NaN
+df["Owner"] = df["Owner"].fillna("")
+df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
+df["Notes"] = df["Notes"].fillna("")
 
 eom_df = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
 if "Last Update" not in eom_df.columns:
@@ -481,7 +492,7 @@ if st.session_state.section == "Projects":
 # Incolla questo DOPO la Parte 2
 # ======================================================
 
-    if not st.session_state.add_project and len(df) > 0:
+    if not st.session_state.add_project and len(df) > 0 and "Project" in df.columns:
         # Separa progetti In Progress e Completed
         in_progress_projects = []
         completed_projects = []
@@ -1199,7 +1210,12 @@ if st.session_state.section == "EOM":
                     st.rerun()
         st.stop()
 
-    # ADD ACTIVITY
+# ======================================================
+# NELLA PARTE 4 - SEZIONE "ADD ACTIVITY"
+# Cerca il bottone "➕ Add activity" e SOSTITUISCI l'intero blocco
+# ======================================================
+
+    # ADD ACTIVITY - VERSIONE CORRETTA
     with st.expander("➕ Add new End-of-Month Activity", expanded=st.session_state.eom_edit_mode):
         c1, c2, c3 = st.columns(3)
         area = c1.text_input("Area", key="eom_area")
@@ -1215,7 +1231,28 @@ if st.session_state.section == "EOM":
             if not activity:
                 st.error("❌ Activity name is required!")
             else:
-                next_order = eom_df["Order"].max() + 1 if len(eom_df) > 0 else 0
+                # Ricarica i dati freschi per evitare conflitti
+                fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+                
+                # Assicura che le colonne base esistano
+                for col in EOM_BASE_COLUMNS:
+                    if col not in fresh_eom.columns:
+                        if col == "🗑️ Delete":
+                            fresh_eom[col] = False
+                        elif col in ["Last Update"]:
+                            fresh_eom[col] = pd.Timestamp.now()
+                        elif col == "Order":
+                            fresh_eom[col] = range(len(fresh_eom))
+                        else:
+                            fresh_eom[col] = ""
+                
+                # Assicura che le colonne mesi esistano
+                for c in month_cols:
+                    if c not in fresh_eom.columns:
+                        fresh_eom[c] = "⚪"
+                
+                next_order = fresh_eom["Order"].max() + 1 if len(fresh_eom) > 0 else 0
+                
                 row = {
                     "Area": area,
                     "ID Macro": id_macro,
@@ -1230,12 +1267,17 @@ if st.session_state.section == "EOM":
                 for c in month_cols:
                     row[c] = "⚪"
 
-                eom_df = pd.concat([eom_df, pd.DataFrame([row])], ignore_index=True)
-                save_to_jsonbin(eom_df, JSONBIN_BIN_ID_EOM)
-                st.success(f"✅ Activity '{activity}' added!")
-                st.rerun()
-
-    st.divider()
+                fresh_eom = pd.concat([fresh_eom, pd.DataFrame([row])], ignore_index=True)
+                
+                # Pulisci il DataFrame prima di salvare
+                fresh_eom = clean_eom_dataframe(fresh_eom, month_cols)
+                
+                if save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM):
+                    st.success(f"✅ Activity '{activity}' added!")
+                    # Forza il reload della pagina per mostrare la nuova attività
+                    st.rerun()
+                else:
+                    st.error("❌ Failed to save activity. Please try again.")
 # ======================================================
 # EOM EDIT MODE E TABLE VIEW - PARTE 5 (FINALE)
 # Incolla questo DOPO la Parte 4
