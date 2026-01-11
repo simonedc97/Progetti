@@ -14,7 +14,6 @@ st.set_page_config(page_title="RM Insurance Planner", layout="wide")
 JSONBIN_API_KEY = "$2a$10$O1c.ADK9BgMXBYVzCnRe2eRnLiTVK4bd7Hqd7kRLMwIISia4UHBQa"
 JSONBIN_BIN_ID_PROJECTS = "69628091d0ea881f40626147"
 JSONBIN_BIN_ID_EOM = "696280d9d0ea881f406261d7"
-JSONBIN_BIN_ID_ATTENDANCE = "696280f9d0ea881f40626222"
 
 PROJECT_COLUMNS = [
     "Area", "Project", "Task", "Owner",
@@ -25,9 +24,6 @@ EOM_BASE_COLUMNS = [
     "Area", "ID Macro", "ID Micro",
     "Activity", "Frequency", "Files", "🗑️ Delete", "Last Update", "Order"
 ]
-
-TEAM_MEMBERS = ["Elena", "Giulia", "Simone", "Paolo"]
-ATTENDANCE_TYPES = ["", "🏢 Office", "🏠 Smart Working", "🌴 Vacation", "⏰ Hourly Leave", "💰 Time Bank"]
 
 # =========================
 # JSONBIN FUNCTIONS
@@ -42,8 +38,9 @@ def save_to_jsonbin(df, bin_id):
     
     data_dict = df.copy()
     for col in data_dict.columns:
-        if data_dict[col].dtype == 'datetime64[ns]':
-            data_dict[col] = data_dict[col].astype(str)
+        if pd.api.types.is_datetime64_any_dtype(data_dict[col]):
+            data_dict[col] = data_dict[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+            data_dict[col] = data_dict[col].replace('NaT', '')
     
     data_to_save = data_dict.to_dict('records')
     
@@ -67,17 +64,15 @@ def load_from_jsonbin(bin_id, columns, date_cols=None):
             data = response.json()['record']
             if data:
                 df = pd.DataFrame(data)
-                
                 if date_cols:
                     for col in date_cols:
                         if col in df.columns:
                             df[col] = pd.to_datetime(df[col], errors='coerce')
-                
                 return df
             return pd.DataFrame(columns=columns)
         else:
             return pd.DataFrame(columns=columns)
-    except Exception as e:
+    except:
         return pd.DataFrame(columns=columns)
 
 # =========================
@@ -117,8 +112,6 @@ if "hidden_months" not in st.session_state:
     st.session_state.hidden_months = []
 if "show_month_manager" not in st.session_state:
     st.session_state.show_month_manager = False
-if "selected_attendance_month" not in st.session_state:
-    st.session_state.selected_attendance_month = date.today().replace(day=1)
 
 # =========================
 # HELPERS
@@ -127,7 +120,7 @@ progress_values = ["Not started", "In progress", "Completed"]
 progress_score = {"Not started": 0, "In progress": 0.5, "Completed": 1}
 
 def clean_eom_dataframe(df, month_cols):
-    """Pulisce il DataFrame EOM"""
+    """Pulisce il DataFrame EOM assicurando i tipi corretti"""
     df = df.copy()
     
     for col in month_cols:
@@ -155,14 +148,14 @@ def clean_eom_dataframe(df, month_cols):
     return df
 
 def last_working_day(year, month):
-    """Calcola ultimo giorno lavorativo del mese"""
+    """Calcola l'ultimo giorno lavorativo del mese"""
     last_day = date(year, month, calendar.monthrange(year, month)[1])
     while last_day.weekday() >= 5:
         last_day -= timedelta(days=1)
     return last_day
 
 def get_next_months(n=6, include_previous=True):
-    """Genera i prossimi N mesi"""
+    """Genera i prossimi N mesi, includendo il mese precedente se richiesto"""
     today = date.today()
     months = []
     
@@ -185,12 +178,9 @@ def get_next_months(n=6, include_previous=True):
     if (2025, 12) not in months:
         months.append((2025, 12))
     
-    return sorted(list(set(months)))
-
-def get_month_dates(year, month):
-    """Ritorna tutte le date di un mese"""
-    _, num_days = calendar.monthrange(year, month)
-    return [date(year, month, day) for day in range(1, num_days + 1)]
+    months = sorted(list(set(months)))
+    
+    return months
 
 # =========================
 # LOAD DATA
@@ -217,26 +207,10 @@ if "Last Update" not in eom_df.columns:
 if "Order" not in eom_df.columns:
     eom_df["Order"] = range(len(eom_df))
 
-attendance_df = load_from_jsonbin(JSONBIN_BIN_ID_ATTENDANCE, ["Date", "Member", "Type", "Notes"], date_cols=["Date"])
-if len(attendance_df) == 0:
-    attendance_df = pd.DataFrame(columns=["Date", "Member", "Type", "Notes"])
-if "Date" in attendance_df.columns:
-    attendance_df["Date"] = pd.to_datetime(attendance_df["Date"], errors='coerce')
-if "Notes" not in attendance_df.columns:
-    attendance_df["Notes"] = ""
-attendance_df["Notes"] = attendance_df["Notes"].fillna("")
-
 # =========================
 # HEADER + NAVIGATION
 # =========================
-col_title, col_attendance = st.columns([8, 2])
-with col_title:
-    st.title("🗂️ RM Insurance Planner")
-with col_attendance:
-    if st.button("📅 Attendance", use_container_width=True, 
-                 type="primary" if st.session_state.section == "Attendance" else "secondary"):
-        st.session_state.section = "Attendance"
-        st.rerun()
+st.title("🗂️ RM Insurance Planner")
 
 nav1, nav2 = st.columns(2)
 with nav1:
@@ -252,9 +226,9 @@ with nav2:
 
 st.divider()
 # ======================================================
-# 📊 PROJECTS ACTIVITIES SECTION
+# 📊 PROJECTS ACTIVITIES - PARTE 2
+# Incolla questo DOPO la Parte 1
 # ======================================================
-# INCOLLA QUESTO DOPO LA PARTE 1
 
 if st.session_state.section == "Projects":
     
@@ -287,29 +261,35 @@ if st.session_state.section == "Projects":
             st.session_state.delete_mode = not st.session_state.delete_mode
             st.rerun()
 
+    # ======================================================
     # FILTERS SECTION
+    # ======================================================
     if st.session_state.show_filters and len(df) > 0:
         with st.expander("🔍 Filters", expanded=True):
             col1, col2, col3, col4 = st.columns(4)
             
             with col1:
                 areas = ["All"] + sorted(df["Area"].dropna().unique().tolist())
-                selected_area = st.selectbox("Area", areas, index=0,
+                selected_area = st.selectbox("Area", areas, 
+                                            index=0,
                                             key=f"filter_area_{st.session_state.reset_filters_flag}")
             
             with col2:
                 owners = ["All"] + sorted(df["Owner"].dropna().unique().tolist())
-                selected_owner = st.selectbox("Owner", owners, index=0,
+                selected_owner = st.selectbox("Owner", owners, 
+                                             index=0,
                                              key=f"filter_owner_{st.session_state.reset_filters_flag}")
             
             with col3:
                 statuses = ["All"] + progress_values
-                selected_status = st.selectbox("Status", statuses, index=0,
+                selected_status = st.selectbox("Status", statuses, 
+                                              index=0,
                                               key=f"filter_status_{st.session_state.reset_filters_flag}")
             
             with col4:
                 priorities = ["All", "Low", "Important", "Urgent"]
-                selected_priority = st.selectbox("Priority", priorities, index=0,
+                selected_priority = st.selectbox("Priority", priorities, 
+                                                index=0,
                                                 key=f"filter_priority_{st.session_state.reset_filters_flag}")
             
             col5, col6, col7 = st.columns(3)
@@ -322,7 +302,8 @@ if st.session_state.section == "Projects":
             
             with col6:
                 projects = ["All"] + sorted(df["Project"].dropna().unique().tolist())
-                selected_project = st.selectbox("Project", projects, index=0,
+                selected_project = st.selectbox("Project", projects, 
+                                               index=0,
                                                key=f"filter_project_{st.session_state.reset_filters_flag}")
             
             with col7:
@@ -367,7 +348,9 @@ if st.session_state.section == "Projects":
         st.info(f"📊 Showing {len(df)} of {len(original_df)} tasks")
         st.divider()
 
-    # ADD PROJECT
+    # ======================================================
+    # ➕ ADD PROJECT
+    # ======================================================
     if st.session_state.add_project:
         st.subheader("➕ New Project")
 
@@ -449,13 +432,15 @@ if st.session_state.section == "Projects":
             st.session_state.task_boxes = 1
             st.rerun()
 
+    # ======================================================
     # CONFIRM DELETE PROJECT
+    # ======================================================
     if st.session_state.confirm_delete_project is not None:
         project = st.session_state.confirm_delete_project
-        st.warning(f"⚠️ Are you sure you want to delete the project **{project}**?")
+        st.warning(f"⚠️ Are you sure you want to delete the project **{project}**? This cannot be undone!")
         col1, col2 = st.columns(2)
         with col1:
-            if st.button("✅ Yes, delete", key=f"confirm_del_proj_{project}", type="primary"):
+            if st.button("✅ Yes, delete project", key=f"confirm_del_proj_{project}", type="primary"):
                 df = df[df["Project"] != project].reset_index(drop=True)
                 save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
                 st.success(f"✅ Project '{project}' deleted")
@@ -466,62 +451,565 @@ if st.session_state.section == "Projects":
             if st.button("❌ Cancel", key=f"cancel_del_proj_{project}"):
                 st.session_state.confirm_delete_project = None
                 st.rerun()
+        st.stop()
 
+    # ======================================================
     # CONFIRM DELETE TASK
+    # ======================================================
     if st.session_state.confirm_delete_task is not None:
         task_id = st.session_state.confirm_delete_task
         project_name, task_name = task_id
         mask = (df["Project"] == project_name) & (df["Task"] == task_name)
         
         if mask.any():
-            st.warning(f"⚠️ Delete task **{task_name}**?")
+            st.warning(f"⚠️ Are you sure you want to delete the task **{task_name}**? This cannot be undone!")
             col1, col2 = st.columns(2)
             with col1:
-                if st.button("✅ Yes", key=f"confirm_del_task_{task_name}", type="primary"):
+                if st.button("✅ Yes, delete task", key=f"confirm_del_task_{task_name}", type="primary"):
                     df = df[~mask].reset_index(drop=True)
                     save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
-                    st.success(f"✅ Task deleted")
+                    st.success(f"✅ Task '{task_name}' deleted")
                     st.session_state.confirm_delete_task = None
                     st.rerun()
             with col2:
                 if st.button("❌ Cancel", key=f"cancel_del_task_{task_name}"):
                     st.session_state.confirm_delete_task = None
                     st.rerun()
+        st.stop()
+# ======================================================
+# 📁 PROJECT VIEW - PARTE 3A - IN PROGRESS PROJECTS
+# Incolla questo DOPO la Parte 2
+# ======================================================
 
-    # PROJECT VIEW
-    if not st.session_state.add_project and st.session_state.confirm_delete_project is None and st.session_state.confirm_delete_task is None:
-        if "Project" not in df.columns or len(df) == 0:
-            st.warning("⚠️ No projects found")
-        else:
-            in_progress_projects = []
-            completed_projects = []
+    if not st.session_state.add_project and len(df) > 0:
+        # Separa progetti In Progress e Completed
+        in_progress_projects = []
+        completed_projects = []
+        
+        for project in df["Project"].unique():
+            proj_df = df[df["Project"] == project]
+            completion = proj_df["Progress"].map(progress_score).mean()
             
-            for project in df["Project"].unique():
-                proj_df = df[df["Project"] == project]
-                completion = proj_df["Progress"].map(progress_score).mean()
+            if completion == 1.0:
+                completed_projects.append(project)
+            else:
+                in_progress_projects.append(project)
+        
+        # Ordina progetti alfabeticamente
+        in_progress_projects.sort()
+        completed_projects.sort()
+        
+        # ===== IN PROGRESS SECTION =====
+        if in_progress_projects:
+            st.markdown("### 📂 In Progress")
+            
+            # Raggruppa per Area
+            in_progress_by_area = {}
+            for project in in_progress_projects:
+                area = df[df["Project"] == project]["Area"].iloc[0]
+                if area not in in_progress_by_area:
+                    in_progress_by_area[area] = []
+                in_progress_by_area[area].append(project)
+            
+            # Ordina aree alfabeticamente e progetti all'interno
+            for area in sorted(in_progress_by_area.keys()):
+                st.markdown(f"#### 🏢 {area}")
                 
-                if completion == 1.0:
-                    completed_projects.append(project)
-                else:
-                    in_progress_projects.append(project)
+                for project in sorted(in_progress_by_area[area]):
+                    proj_df = df[df["Project"] == project]
+                    completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
+                    
+                    # Header del progetto
+                    header_text = f"📁 {project} — {completion}%"
+                    
+                    if st.session_state.delete_mode:
+                        cols = st.columns([8, 1])
+                        with cols[0]:
+                            expand = st.expander(header_text, expanded=False)
+                        with cols[1]:
+                            if st.button("🗑️", key=f"delete_proj_{project}"):
+                                st.session_state.confirm_delete_project = project
+                                st.rerun()
+                    else:
+                        expand = st.expander(header_text, expanded=False)
+                    
+                    with expand:
+                        st.progress(completion / 100)
+
+                        # TASK VIEW (NON IN EDIT MODE)
+                        if not st.session_state.edit_mode:
+                            for idx, r in proj_df.iterrows():
+                                cols = st.columns([10, 1])
+                                with cols[0]:
+                                    st.markdown(f"**{r['Task']}**")
+                                    st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
+                                    
+                                    # Dates info
+                                    release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
+                                    due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
+                                    st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
+                                    
+                                    # GR Number
+                                    gr_text = r.get('GR/Mail Object', '')
+                                    if gr_text:
+                                        parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
+                                        
+                                        if parts[0].strip():
+                                            with st.expander("📋 GR Number"):
+                                                st.text(parts[0].strip())
+                                        
+                                        if len(parts) > 1 and parts[1].strip():
+                                            with st.expander("📧 Mail Object"):
+                                                st.text(parts[1].strip())
+                                    
+                                    # Notes section con auto-save
+                                    current_notes = r.get('Notes', '')
+                                    if pd.isna(current_notes):
+                                        current_notes = ''
+                                    notes = st.text_area(
+                                        "📝 Notes",
+                                        value=current_notes,
+                                        key=f"notes_{project}_{r['Task']}_{idx}",
+                                        height=80,
+                                        placeholder="Add your notes here..."
+                                    )
+                                    
+                                    if notes != current_notes:
+                                        df.loc[idx, "Notes"] = notes
+                                        df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
+                                        save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+
+                                    current_status = r["Progress"]
+                                    status = st.radio(
+                                        "Status",
+                                        options=progress_values,
+                                        index=progress_values.index(current_status),
+                                        key=f"status_radio_{project}_{r['Task']}_{idx}",
+                                        horizontal=True
+                                    )
+                                    
+                                    if status != current_status:
+                                        df.loc[idx, "Progress"] = status
+                                        df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
+                                        save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                                        st.rerun()
+
+                                with cols[1]:
+                                    if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
+                                        st.session_state.confirm_delete_task = (project, r['Task'])
+                                        st.rerun()
+                                
+                                st.divider()
+
+                        # ✏️ EDIT MODE
+                        if st.session_state.edit_mode:
+                            st.markdown("### ✏️ Edit project")
+                            new_area = st.text_input("Area", area, key=f"ea_{project}")
+                            new_name = st.text_input("Project name", project, key=f"ep_{project}")
+
+                            st.markdown("### Edit existing tasks")
+                            updated_rows = []
+
+                            for idx, row in proj_df.iterrows():
+                                with st.container():
+                                    st.markdown(f"**Task #{idx}**")
+                                    t = st.text_input("Task", row["Task"], key=f"t_{idx}")
+                                    o = st.text_input("Owner (optional)", row["Owner"] if row["Owner"] else "", key=f"o_{idx}")
+                                    
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        p = st.selectbox(
+                                            "Status",
+                                            progress_values,
+                                            index=progress_values.index(row["Progress"]),
+                                            key=f"p_{idx}"
+                                        )
+                                    with col_b:
+                                        pr = st.selectbox(
+                                            "Priority",
+                                            ["Low", "Important", "Urgent"],
+                                            index=["Low", "Important", "Urgent"].index(row["Priority"]),
+                                            key=f"pr_{idx}"
+                                        )
+                                    
+                                    col_c, col_d = st.columns(2)
+                                    with col_c:
+                                        r = st.date_input("Release Date", 
+                                                         row["Release Date"] if pd.notna(row["Release Date"]) else None, 
+                                                         key=f"r_{idx}")
+                                    with col_d:
+                                        d = st.date_input("Due Date", 
+                                                         row["Due Date"] if pd.notna(row["Due Date"]) else None, 
+                                                         key=f"d_{idx}")
+                                    
+                                    gr_combined = row.get("GR/Mail Object", "")
+                                    parts = gr_combined.split('\n', 1) if '\n' in gr_combined else [gr_combined, '']
+                                    
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", 
+                                                        parts[0] if parts[0] else "", 
+                                                        key=f"gr_{idx}", 
+                                                        height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", 
+                                                           parts[1] if len(parts) > 1 else "", 
+                                                           key=f"mail_{idx}", 
+                                                           height=80)
+                                    
+                                    gr_combined_save = f"{gr}\n{mail}" if gr or mail else ""
+                                    
+                                    notes = st.text_area("Notes (optional)", 
+                                                        row.get("Notes", ""), 
+                                                        key=f"notes_{idx}", 
+                                                        height=60)
+
+                                    updated_rows.append((idx, t, o, p, pr, r, d, gr_combined_save, notes))
+                                    st.divider()
+
+                            st.markdown("### ➕ Add new tasks to this project")
+                            add_key = f"add_boxes_{project}"
+                            if add_key not in st.session_state:
+                                st.session_state[add_key] = 1
+                                
+                            new_tasks = []
+
+                            for i in range(st.session_state[add_key]):
+                                with st.container():
+                                    st.markdown(f"**New Task {i+1}**")
+                                    t = st.text_input("Task", key=f"nt_{project}_{i}")
+                                    o = st.text_input("Owner (optional)", key=f"no_{project}_{i}")
+                                    
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        p = st.selectbox("Status", progress_values, key=f"np_{project}_{i}")
+                                    with col_b:
+                                        pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_{project}_{i}")
+                                    
+                                    col_c, col_d = st.columns(2)
+                                    with col_c:
+                                        r = st.date_input("Release Date (optional)", value=None, key=f"nr_{project}_{i}")
+                                    with col_d:
+                                        d = st.date_input("Due Date (optional)", value=None, key=f"nd_{project}_{i}")
+                                    
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", key=f"ngr_{project}_{i}", height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", key=f"nmail_{project}_{i}", height=80)
+                                    
+                                    gr_combined = f"{gr}\n{mail}" if gr or mail else ""
+                                    
+                                    notes = st.text_area("Notes (optional)", key=f"nnotes_{project}_{i}", height=60)
+                                    
+                                    if t:
+                                        new_tasks.append((t, o, p, pr, r, d, gr_combined, notes))
+                                    st.divider()
+
+                            col1, col2, col3 = st.columns(3)
+                            if col1.button("➕ Add task", key=f"add_{project}"):
+                                st.session_state[add_key] += 1
+                                st.rerun()
+
+                            if col2.button("💾 Save changes", key=f"save_{project}", type="primary"):
+                                df.loc[df["Project"] == project, "Area"] = new_area
+                                df.loc[df["Project"] == project, "Project"] = new_name
+                                df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
+
+                                for idx, t, o, p, pr, r, d, gr, notes in updated_rows:
+                                    df.loc[idx, "Task"] = t
+                                    df.loc[idx, "Owner"] = o
+                                    df.loc[idx, "Progress"] = p
+                                    df.loc[idx, "Priority"] = pr
+                                    df.loc[idx, "Release Date"] = pd.Timestamp(r) if r else pd.NaT
+                                    df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
+                                    df.loc[idx, "GR/Mail Object"] = gr
+                                    df.loc[idx, "Notes"] = notes
+                                    df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
+
+                                new_rows = []
+                                for t, o, p, pr, r, d, gr, notes in new_tasks:
+                                    new_rows.append({
+                                        "Area": new_area,
+                                        "Project": new_name,
+                                        "Task": t,
+                                        "Owner": o,
+                                        "Progress": p,
+                                        "Priority": pr,
+                                        "Release Date": pd.Timestamp(r) if r else pd.NaT,
+                                        "Due Date": pd.Timestamp(d) if d else pd.NaT,
+                                        "GR/Mail Object": gr,
+                                        "Notes": notes,
+                                        "Last Update": pd.Timestamp.now() + pd.Timedelta(hours=1),
+                                        "Order": df["Order"].max() + 1
+                                    })
+                                
+                                if new_rows:
+                                    df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+
+                                save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                                st.session_state.edit_mode = False
+                                if add_key in st.session_state:
+                                    st.session_state[add_key] = 1
+                                st.success("✅ Changes saved successfully!")
+                                st.rerun()
+
+                            if col3.button("❌ Cancel", key=f"cancel_{project}"):
+                                st.session_state.edit_mode = False
+                                if add_key in st.session_state:
+                                    st.session_state[add_key] = 1
+                                st.rerun()
             
-            # Display projects (simplified for length - include full logic from original)
-            st.info("Projects display - use full original code for complete view")
+            st.divider()
+# ======================================================
+# COMPLETED PROJECTS SECTION - PARTE 3B
+# Incolla questo DOPO la Parte 3A
+# ======================================================
+
+        # ===== COMPLETED SECTION =====
+        if completed_projects:
+            st.markdown("### ✅ Completed")
+            
+            # Raggruppa per Area
+            completed_by_area = {}
+            for project in completed_projects:
+                area = df[df["Project"] == project]["Area"].iloc[0]
+                if area not in completed_by_area:
+                    completed_by_area[area] = []
+                completed_by_area[area].append(project)
+            
+            # Ordina aree alfabeticamente e progetti all'interno
+            for area in sorted(completed_by_area.keys()):
+                st.markdown(f"#### 🏢 {area}")
+                
+                for project in sorted(completed_by_area[area]):
+                    proj_df = df[df["Project"] == project]
+                    completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
+                    
+                    header_text = f"📁 {project} — {completion}%"
+                    
+                    if st.session_state.delete_mode:
+                        cols = st.columns([8, 1])
+                        with cols[0]:
+                            expand = st.expander(header_text, expanded=False)
+                        with cols[1]:
+                            if st.button("🗑️", key=f"delete_proj_comp_{project}"):
+                                st.session_state.confirm_delete_project = project
+                                st.rerun()
+                    else:
+                        expand = st.expander(header_text, expanded=False)
+                    
+                    with expand:
+                        st.progress(completion / 100)
+                        
+                        # TASK VIEW (NON IN EDIT MODE)
+                        if not st.session_state.edit_mode:
+                            for idx, r in proj_df.iterrows():
+                                st.markdown(f"**{r['Task']}**")
+                                st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
+                                release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
+                                due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
+                                st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
+                                
+                                # GR Number and Mail Object
+                                gr_text = r.get('GR/Mail Object', '')
+                                if gr_text:
+                                    parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
+                                    
+                                    if parts[0].strip():
+                                        with st.expander("📋 GR Number"):
+                                            st.text(parts[0].strip())
+                                    
+                                    if len(parts) > 1 and parts[1].strip():
+                                        with st.expander("📧 Mail Object"):
+                                            st.text(parts[1].strip())
+                                
+                                # Notes section - Read only per progetti completati
+                                if r.get('Notes') and r['Notes']:
+                                    with st.expander("📝 Notes"):
+                                        st.text(r['Notes'])
+                                
+                                st.write(f"✅ Status: {r['Progress']}")
+                                st.divider()
+                        
+                        # ✏️ EDIT MODE - IDENTICAL TO IN PROGRESS
+                        if st.session_state.edit_mode:
+                            st.markdown("### ✏️ Edit completed project")
+                            new_area = st.text_input("Area", area, key=f"ea_comp_{project}")
+                            new_name = st.text_input("Project name", project, key=f"ep_comp_{project}")
+
+                            st.markdown("### Edit existing tasks")
+                            updated_rows = []
+
+                            for idx, row in proj_df.iterrows():
+                                with st.container():
+                                    st.markdown(f"**Task #{idx}**")
+                                    t = st.text_input("Task", row["Task"], key=f"t_comp_{idx}")
+                                    o = st.text_input("Owner (optional)", row["Owner"] if row["Owner"] else "", key=f"o_comp_{idx}")
+                                    
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        p = st.selectbox(
+                                            "Status",
+                                            progress_values,
+                                            index=progress_values.index(row["Progress"]),
+                                            key=f"p_comp_{idx}"
+                                        )
+                                    with col_b:
+                                        pr = st.selectbox(
+                                            "Priority",
+                                            ["Low", "Important", "Urgent"],
+                                            index=["Low", "Important", "Urgent"].index(row["Priority"]),
+                                            key=f"pr_comp_{idx}"
+                                        )
+                                    
+                                    col_c, col_d = st.columns(2)
+                                    with col_c:
+                                        r = st.date_input("Release Date", 
+                                                         row["Release Date"] if pd.notna(row["Release Date"]) else None, 
+                                                         key=f"r_comp_{idx}")
+                                    with col_d:
+                                        d = st.date_input("Due Date", 
+                                                         row["Due Date"] if pd.notna(row["Due Date"]) else None, 
+                                                         key=f"d_comp_{idx}")
+                                    
+                                    gr_combined = row.get("GR/Mail Object", "")
+                                    parts = gr_combined.split('\n', 1) if '\n' in gr_combined else [gr_combined, '']
+                                    
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", 
+                                                        parts[0] if parts[0] else "", 
+                                                        key=f"gr_comp_{idx}", 
+                                                        height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", 
+                                                           parts[1] if len(parts) > 1 else "", 
+                                                           key=f"mail_comp_{idx}", 
+                                                           height=80)
+                                    
+                                    gr_combined_save = f"{gr}\n{mail}" if gr or mail else ""
+                                    
+                                    notes = st.text_area("Notes (optional)", 
+                                                        row.get("Notes", ""), 
+                                                        key=f"notes_comp_{idx}", 
+                                                        height=60)
+
+                                    updated_rows.append((idx, t, o, p, pr, r, d, gr_combined_save, notes))
+                                    st.divider()
+
+                            st.markdown("### ➕ Add new tasks to this project")
+                            add_key = f"add_boxes_comp_{project}"
+                            if add_key not in st.session_state:
+                                st.session_state[add_key] = 1
+                                
+                            new_tasks = []
+
+                            for i in range(st.session_state[add_key]):
+                                with st.container():
+                                    st.markdown(f"**New Task {i+1}**")
+                                    t = st.text_input("Task", key=f"nt_comp_{project}_{i}")
+                                    o = st.text_input("Owner (optional)", key=f"no_comp_{project}_{i}")
+                                    
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        p = st.selectbox("Status", progress_values, key=f"np_comp_{project}_{i}")
+                                    with col_b:
+                                        pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"npr_comp_{project}_{i}")
+                                    
+                                    col_c, col_d = st.columns(2)
+                                    with col_c:
+                                        r = st.date_input("Release Date (optional)", value=None, key=f"nr_comp_{project}_{i}")
+                                    with col_d:
+                                        d = st.date_input("Due Date (optional)", value=None, key=f"nd_comp_{project}_{i}")
+                                    
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        gr = st.text_area("📋 GR Number (optional)", key=f"ngr_comp_{project}_{i}", height=80)
+                                    with col_mail:
+                                        mail = st.text_area("📧 Mail Object (optional)", key=f"nmail_comp_{project}_{i}", height=80)
+                                    
+                                    gr_combined = f"{gr}\n{mail}" if gr or mail else ""
+                                    
+                                    notes = st.text_area("Notes (optional)", key=f"nnotes_comp_{project}_{i}", height=60)
+                                    
+                                    if t:
+                                        new_tasks.append((t, o, p, pr, r, d, gr_combined, notes))
+                                    st.divider()
+
+                            col1, col2, col3 = st.columns(3)
+                            if col1.button("➕ Add task", key=f"add_comp_{project}"):
+                                st.session_state[add_key] += 1
+                                st.rerun()
+
+                            if col2.button("💾 Save changes", key=f"save_comp_{project}", type="primary"):
+                                df.loc[df["Project"] == project, "Area"] = new_area
+                                df.loc[df["Project"] == project, "Project"] = new_name
+                                df.loc[df["Project"] == project, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
+
+                                for idx, t, o, p, pr, r, d, gr, notes in updated_rows:
+                                    df.loc[idx, "Task"] = t
+                                    df.loc[idx, "Owner"] = o
+                                    df.loc[idx, "Progress"] = p
+                                    df.loc[idx, "Priority"] = pr
+                                    df.loc[idx, "Release Date"] = pd.Timestamp(r) if r else pd.NaT
+                                    df.loc[idx, "Due Date"] = pd.Timestamp(d) if d else pd.NaT
+                                    df.loc[idx, "GR/Mail Object"] = gr
+                                    df.loc[idx, "Notes"] = notes
+                                    df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
+
+                                new_rows = []
+                                for t, o, p, pr, r, d, gr, notes in new_tasks:
+                                    new_rows.append({
+                                        "Area": new_area,
+                                        "Project": new_name,
+                                        "Task": t,
+                                        "Owner": o,
+                                        "Progress": p,
+                                        "Priority": pr,
+                                        "Release Date": pd.Timestamp(r) if r else pd.NaT,
+                                        "Due Date": pd.Timestamp(d) if d else pd.NaT,
+                                        "GR/Mail Object": gr,
+                                        "Notes": notes,
+                                        "Last Update": pd.Timestamp.now() + pd.Timedelta(hours=1),
+                                        "Order": df["Order"].max() + 1
+                                    })
+                                
+                                if new_rows:
+                                    df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+
+                                save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                                st.session_state.edit_mode = False
+                                if add_key in st.session_state:
+                                    st.session_state[add_key] = 1
+                                st.success("✅ Changes saved successfully!")
+                                st.rerun()
+
+                            if col3.button("❌ Cancel", key=f"cancel_comp_{project}"):
+                                st.session_state.edit_mode = False
+                                if add_key in st.session_state:
+                                    st.session_state[add_key] = 1
+                                st.rerun()
+
+    elif not st.session_state.add_project and len(df) == 0:
+        st.info("📝 No projects yet. Click '➕ Project' to create your first project!")
 
     # FOOTER
     st.divider()
-    if len(df) > 0:
+    if len(df) > 0 and "Progress" in df.columns:
         total_tasks = len(df)
         completed_tasks = len(df[df["Progress"] == "Completed"])
-        st.caption(f"📊 Projects: {df['Project'].nunique()} | Tasks: {completed_tasks}/{total_tasks}")
+        st.caption(f"📊 Total projects: {df['Project'].nunique()} | Tasks: {completed_tasks}/{total_tasks} completed ({int(completed_tasks/total_tasks*100)}%)")
+    # ======================================================
+# 📅 END OF MONTH ACTIVITIES - PARTE 4
+# Incolla questo DOPO la Parte 3B
 # ======================================================
-# 📅 END OF MONTH ACTIVITIES SECTION
-# ======================================================
-# INCOLLA QUESTO DOPO LA PARTE 2
 
 if st.session_state.section == "EOM":
+
     st.subheader("📅 End of Month Activities")
     
+    # Display last update
     if len(eom_df) > 0 and "Last Update" in eom_df.columns:
         try:
             last_update_eom = pd.to_datetime(eom_df["Last Update"]).max()
@@ -529,11 +1017,13 @@ if st.session_state.section == "EOM":
         except:
             st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
 
+    # Calcola i mesi (include mese precedente come corrente)
     months = get_next_months(6, include_previous=True)
     eom_dates = [last_working_day(y, m) for y, m in months]
     month_cols = [d.strftime("%d %B %Y") for d in eom_dates]
     current_month_col = month_cols[0]
 
+    # INIT COLUMNS
     for col in EOM_BASE_COLUMNS:
         if col not in eom_df.columns:
             if col == "🗑️ Delete":
@@ -547,22 +1037,170 @@ if st.session_state.section == "EOM":
 
     eom_df = clean_eom_dataframe(eom_df, month_cols)
 
-    col1, col2, col3 = st.columns(3)
+    completed_cols = []
+    if len(eom_df) > 0:
+        for col in month_cols:
+            if col in eom_df.columns:
+                values = eom_df[col].unique()
+                if all(v in ["🟢", "⚪"] for v in values):
+                    completed_cols.append(col)
+
+    # HEADER WITH ACTIONS
+    col1, col2, col3, col4, col5 = st.columns([2.5, 1, 1, 1, 1])
     with col1:
-        st.caption(f"🎯 **Current**: {current_month_col}")
+        st.caption(f"🎯 **Current working month**: {current_month_col}")
     with col2:
+        if st.button("📅 Months", use_container_width=True):
+            st.session_state.show_month_manager = not st.session_state.show_month_manager
+            st.rerun()
+    with col3:
+        if st.button("🔍 Filters" if not st.session_state.show_eom_filters else "🔍 Hide", 
+                     use_container_width=True):
+            st.session_state.show_eom_filters = not st.session_state.show_eom_filters
+            st.rerun()
+    with col4:
         if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
                      use_container_width=True):
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
-    with col3:
+    with col5:
         if st.button("🗑️ Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel", 
                      use_container_width=True):
             st.session_state.eom_bulk_delete = not st.session_state.eom_bulk_delete
             st.rerun()
 
+    # MONTH MANAGER
+    if st.session_state.show_month_manager:
+        with st.expander("📅 Month Visibility Manager", expanded=True):
+            st.markdown("**Manage which months to display in the table**")
+            
+            num_cols = 3
+            cols = st.columns(num_cols)
+            
+            for i, col in enumerate(month_cols):
+                with cols[i % num_cols]:
+                    month_name = col.split()[1]
+                    year = col.split()[2]
+                    
+                    is_hidden = col in st.session_state.hidden_months
+                    is_completed = col in completed_cols
+                    is_current = col == current_month_col
+                    
+                    label = f"{month_name} {year}"
+                    if is_current:
+                        label = f"🎯 {label} (Current)"
+                    elif is_completed:
+                        label = f"✅ {label}"
+                    
+                    visible = st.checkbox(
+                        label,
+                        value=not is_hidden,
+                        key=f"month_visibility_{col}",
+                        help=f"{'Completed' if is_completed else 'In progress'}"
+                    )
+                    
+                    if not visible and col not in st.session_state.hidden_months:
+                        st.session_state.hidden_months.append(col)
+                    elif visible and col in st.session_state.hidden_months:
+                        st.session_state.hidden_months.remove(col)
+            
+            st.divider()
+            col_reset, col_hide_completed, col_show_all = st.columns(3)
+            
+            with col_reset:
+                if st.button("🔄 Reset to Default", use_container_width=True):
+                    st.session_state.hidden_months = []
+                    st.session_state.show_completed_months = False
+                    st.rerun()
+            
+            with col_hide_completed:
+                if st.button("🔒 Hide All Completed", use_container_width=True):
+                    st.session_state.hidden_months = completed_cols.copy()
+                    st.rerun()
+            
+            with col_show_all:
+                if st.button("👁️ Show All Months", use_container_width=True):
+                    st.session_state.hidden_months = []
+                    st.rerun()
+
+    # FILTERS SECTION FOR EOM
+    if st.session_state.show_eom_filters and len(eom_df) > 0:
+        with st.expander("🔍 Filters", expanded=True):
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                eom_areas = ["All"] + sorted(eom_df["Area"].dropna().unique().tolist())
+                selected_eom_area = st.selectbox("Area", eom_areas, 
+                                                index=0,
+                                                key=f"filter_eom_area_{st.session_state.reset_eom_filters_flag}")
+            
+            with col2:
+                eom_macros = ["All"] + sorted(eom_df["ID Macro"].dropna().unique().tolist())
+                selected_eom_macro = st.selectbox("ID Macro", eom_macros, 
+                                                 index=0,
+                                                 key=f"filter_eom_macro_{st.session_state.reset_eom_filters_flag}")
+            
+            with col3:
+                eom_micros = ["All"] + sorted(eom_df["ID Micro"].dropna().unique().tolist())
+                selected_eom_micro = st.selectbox("ID Micro", eom_micros, 
+                                                 index=0,
+                                                 key=f"filter_eom_micro_{st.session_state.reset_eom_filters_flag}")
+            
+            with col4:
+                completion_filter = st.selectbox("Current Month Status", 
+                                                ["All", "Completed", "Not Completed"], 
+                                                index=0,
+                                                key=f"filter_eom_status_{st.session_state.reset_eom_filters_flag}")
+            
+            if st.button("🔄 Reset Filters", use_container_width=True, key="reset_eom_filters"):
+                st.session_state.reset_eom_filters_flag += 1
+                st.rerun()
+        
+        # Apply filters
+        filtered_eom_df = eom_df.copy()
+        
+        if selected_eom_area != "All":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df["Area"] == selected_eom_area]
+        
+        if selected_eom_macro != "All":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df["ID Macro"] == selected_eom_macro]
+        
+        if selected_eom_micro != "All":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df["ID Micro"] == selected_eom_micro]
+        
+        if completion_filter == "Completed":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col] == "🟢"]
+        elif completion_filter == "Not Completed":
+            filtered_eom_df = filtered_eom_df[filtered_eom_df[current_month_col].isin(["🔴", "⚪"])]
+        
+        eom_df = filtered_eom_df
+        
+        st.info(f"📊 Showing {len(eom_df)} of {len(load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS))} activities")
+
+    st.divider()
+
+    # CONFIRM DELETE EOM ACTIVITY
+    if st.session_state.confirm_delete_eom is not None:
+        idx = st.session_state.confirm_delete_eom
+        if idx in eom_df.index:
+            activity_name = eom_df.loc[idx, "Activity"]
+            st.warning(f"⚠️ Are you sure you want to delete the activity **{activity_name}**? This cannot be undone!")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ Yes, delete activity", key=f"confirm_del_eom_{idx}", type="primary"):
+                    eom_df = eom_df.drop(idx).reset_index(drop=True)
+                    save_to_jsonbin(eom_df, JSONBIN_BIN_ID_EOM)
+                    st.success(f"✅ Activity '{activity_name}' deleted")
+                    st.session_state.confirm_delete_eom = None
+                    st.rerun()
+            with col2:
+                if st.button("❌ Cancel", key=f"cancel_del_eom_{idx}"):
+                    st.session_state.confirm_delete_eom = None
+                    st.rerun()
+        st.stop()
+
     # ADD ACTIVITY
-    with st.expander("➕ Add new Activity", expanded=st.session_state.eom_edit_mode):
+    with st.expander("➕ Add new End-of-Month Activity", expanded=st.session_state.eom_edit_mode):
         c1, c2, c3 = st.columns(3)
         area = c1.text_input("Area", key="eom_area")
         id_macro = c2.text_input("ID Macro", key="eom_macro")
@@ -570,12 +1208,12 @@ if st.session_state.section == "EOM":
 
         activity = st.text_input("Activity", key="eom_activity")
         c4, c5 = st.columns(2)
-        frequency = c4.text_input("Frequency", key="eom_freq")
+        frequency = c4.text_input("Frequency (e.g., Monthly, Quarterly)", key="eom_freq")
         files = c5.text_input("Files", key="eom_files")
 
         if st.button("➕ Add activity", type="primary", key="eom_add_btn"):
             if not activity:
-                st.error("❌ Activity name required!")
+                st.error("❌ Activity name is required!")
             else:
                 next_order = eom_df["Order"].max() + 1 if len(eom_df) > 0 else 0
                 row = {
@@ -594,12 +1232,125 @@ if st.session_state.section == "EOM":
 
                 eom_df = pd.concat([eom_df, pd.DataFrame([row])], ignore_index=True)
                 save_to_jsonbin(eom_df, JSONBIN_BIN_ID_EOM)
-                st.success(f"✅ Activity added!")
+                st.success(f"✅ Activity '{activity}' added!")
                 st.rerun()
 
     st.divider()
+# ======================================================
+# EOM EDIT MODE E TABLE VIEW - PARTE 5 (FINALE)
+# Incolla questo DOPO la Parte 4
+# ======================================================
 
-    # TABLE VIEW
+    # EDIT MODE - LIST VIEW
+    if st.session_state.eom_edit_mode and len(eom_df) > 0:
+        st.subheader("✏️ Edit Activities")
+        
+        eom_df_sorted = eom_df.sort_values('Order').reset_index(drop=True)
+        
+        for idx, row in eom_df_sorted.iterrows():
+            header_cols = st.columns([0.5, 0.5, 9, 1])
+            
+            with header_cols[0]:
+                if idx > 0:
+                    if st.button("⬆️", key=f"edit_up_{idx}_{row['Activity'][:10]}"):
+                        current_order = row["Order"]
+                        prev_row = eom_df_sorted.iloc[idx-1]
+                        prev_order = prev_row["Order"]
+                        
+                        fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+                        mask_current = fresh_eom["Order"] == current_order
+                        mask_prev = fresh_eom["Order"] == prev_order
+                        
+                        fresh_eom.loc[mask_current, "Order"] = prev_order
+                        fresh_eom.loc[mask_prev, "Order"] = current_order
+                        
+                        save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM)
+                        st.rerun()
+            
+            with header_cols[1]:
+                if idx < len(eom_df_sorted) - 1:
+                    if st.button("⬇️", key=f"edit_down_{idx}_{row['Activity'][:10]}"):
+                        current_order = row["Order"]
+                        next_row = eom_df_sorted.iloc[idx+1]
+                        next_order = next_row["Order"]
+                        
+                        fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+                        mask_current = fresh_eom["Order"] == current_order
+                        mask_next = fresh_eom["Order"] == next_order
+                        
+                        fresh_eom.loc[mask_current, "Order"] = next_order
+                        fresh_eom.loc[mask_next, "Order"] = current_order
+                        
+                        save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM)
+                        st.rerun()
+            
+            with header_cols[2]:
+                expand = st.expander(f"📝 {row['Activity']}", expanded=False)
+            
+            with header_cols[3]:
+                st.write("")
+                if st.button("🗑️", key=f"delete_eom_{idx}_{row['Activity'][:10]}"):
+                    st.session_state.confirm_delete_eom = idx
+                    st.rerun()
+            
+            with expand:
+                c1, c2, c3 = st.columns(3)
+                new_area = c1.text_input("Area", row["Area"], key=f"edit_area_{idx}_{row['Activity'][:10]}")
+                new_macro = c2.text_input("ID Macro", row["ID Macro"], key=f"edit_macro_{idx}_{row['Activity'][:10]}")
+                new_micro = c3.text_input("ID Micro", row["ID Micro"], key=f"edit_micro_{idx}_{row['Activity'][:10]}")
+                
+                new_activity = st.text_input("Activity", row["Activity"], key=f"edit_activity_{idx}_{row['Activity'][:10]}")
+                
+                c4, c5 = st.columns(2)
+                new_freq = c4.text_input("Frequency", row["Frequency"], key=f"edit_freq_{idx}_{row['Activity'][:10]}")
+                new_files = c5.text_input("Files", row["Files"], key=f"edit_files_{idx}_{row['Activity'][:10]}")
+                
+                if st.button("💾 Save changes", key=f"save_eom_{idx}_{row['Activity'][:10]}", type="primary"):
+                    fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+                    mask = fresh_eom["Order"] == row["Order"]
+                    fresh_eom.loc[mask, "Area"] = new_area
+                    fresh_eom.loc[mask, "ID Macro"] = new_macro
+                    fresh_eom.loc[mask, "ID Micro"] = new_micro
+                    fresh_eom.loc[mask, "Activity"] = new_activity
+                    fresh_eom.loc[mask, "Frequency"] = new_freq
+                    fresh_eom.loc[mask, "Files"] = new_files
+                    fresh_eom.loc[mask, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
+                    save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM)
+                    st.success(f"✅ Activity updated!")
+                    st.rerun()
+
+        st.divider()
+
+    # DELETE MODE (Multiple Selection)
+    if st.session_state.eom_bulk_delete and len(eom_df) > 0:
+        st.warning("🗑️ **Delete Mode**: Select activities to delete")
+        
+        selected_to_delete = []
+        for idx, row in eom_df.iterrows():
+            col1, col2 = st.columns([1, 10])
+            with col1:
+                if st.checkbox("", key=f"bulk_select_{idx}"):
+                    selected_to_delete.append(idx)
+            with col2:
+                st.write(f"**{row['Activity']}** ({row['Area']} - {row['ID Macro']}/{row['ID Micro']})")
+        
+        st.divider()
+        
+        if selected_to_delete:
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
+                    eom_df = eom_df.drop(selected_to_delete).reset_index(drop=True)
+                    save_to_jsonbin(eom_df, JSONBIN_BIN_ID_EOM)
+                    st.success(f"✅ {len(selected_to_delete)} activities deleted!")
+                    st.session_state.eom_bulk_delete = False
+                    st.rerun()
+        else:
+            st.info("👆 Select activities above to delete them")
+        
+        st.divider()
+
+    # TABLE VIEW (NON EDIT MODE & NON BULK DELETE)
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) > 0:
         eom_df = eom_df.sort_values('Order').reset_index(drop=True)
         
@@ -610,15 +1361,20 @@ if st.session_state.section == "EOM":
         
         column_config = {}
         
-        for col in visible_cols:
+        for i, col in enumerate(visible_cols):
             is_current = (col == current_month_col)
             column_config[col] = st.column_config.SelectboxColumn(
                 col,
-                help="🎯 Current" if is_current else "Future",
+                help="🎯 **Current working month**" if is_current else "Future month",
                 options=["⚪", "🟢", "🔴"],
                 default="⚪",
                 width="small"
             )
+
+        hidden_count = len(st.session_state.hidden_months)
+        if hidden_count > 0:
+            hidden_month_names = [c.split()[1] for c in st.session_state.hidden_months]
+            st.info(f"📅 **{hidden_count} month(s) hidden**: {', '.join(hidden_month_names)}. Click '📅 Months' to manage visibility.")
 
         edited = st.data_editor(
             display_df,
@@ -640,162 +1396,50 @@ if st.session_state.section == "EOM":
 
         st.divider()
         
+        # STATISTICS
         total_activities = len(eom_df)
         completed_current = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
         progress_pct = int((completed_current / total_activities * 100)) if total_activities > 0 else 0
         
-        st.metric("Current Month Progress", f"{completed_current}/{total_activities}", f"{progress_pct}%")
-
-# ======================================================
-# 📅 ATTENDANCE SECTION
-# ======================================================
-
-if st.session_state.section == "Attendance":
-    st.subheader("📅 Team Attendance Tracker")
-    
-    # Month navigation
-    col1, col2, col3, col4, col5 = st.columns([2, 1, 2, 1, 2])
-    
-    with col2:
-        if st.button("◀️ Previous", use_container_width=True):
-            current = st.session_state.selected_attendance_month
-            if current.month == 1:
-                st.session_state.selected_attendance_month = date(current.year - 1, 12, 1)
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            st.metric(
+                label="Current Month Progress",
+                value=f"{completed_current}/{total_activities}",
+                delta=f"{progress_pct}%"
+            )
+        with col2:
+            if progress_pct == 100:
+                st.success("🎉 All activities completed!")
+            elif progress_pct >= 50:
+                st.info(f"💪 Keep going! {total_activities - completed_current} left")
             else:
-                st.session_state.selected_attendance_month = date(current.year, current.month - 1, 1)
-            st.rerun()
-    
-    with col3:
-        selected_month = st.session_state.selected_attendance_month
-        st.markdown(f"### {selected_month.strftime('%B %Y')}")
-    
-    with col4:
-        if st.button("Next ▶️", use_container_width=True):
-            current = st.session_state.selected_attendance_month
-            if current.month == 12:
-                st.session_state.selected_attendance_month = date(current.year + 1, 1, 1)
-            else:
-                st.session_state.selected_attendance_month = date(current.year, current.month + 1, 1)
-            st.rerun()
-    
-    with col5:
-        if st.button("📅 Today", use_container_width=True):
-            st.session_state.selected_attendance_month = date.today().replace(day=1)
-            st.rerun()
-    
+                st.warning(f"🚀 Let's get started!")
+
+        # Mostra stato delle colonne visibili
+        st.caption("**Month Overview:**")
+        visible_month_cols = [col for col in visible_cols if col in month_cols][:4]
+        if visible_month_cols:
+            cols = st.columns(min(len(visible_month_cols), 4))
+            for i, col in enumerate(visible_month_cols):
+                with cols[i]:
+                    completed = (eom_df[col] == "🟢").sum()
+                    pct = int((completed / total_activities * 100)) if total_activities > 0 else 0
+                    month_name = col.split()[1]
+                    
+                    if pct == 100:
+                        st.success(f"✅ {month_name}: {pct}%")
+                    elif pct > 0:
+                        st.info(f"⏳ {month_name}: {pct}%")
+                    else:
+                        st.caption(f"⚪ {month_name}: {pct}%")
+
+    elif not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) == 0:
+        st.info("📝 No End-of-Month activities yet. Add your first activity above!")
+
+    # Footer
     st.divider()
-    
-    # Get dates for month
-    year = selected_month.year
-    month = selected_month.month
-    month_dates = get_month_dates(year, month)
-    
-    # Calendar for each member
-    for member in TEAM_MEMBERS:
-        with st.expander(f"👤 {member}", expanded=True):
-            
-            days_header = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
-            
-            first_day = month_dates[0]
-            first_weekday = first_day.weekday()
-            
-            header_cols = st.columns(7)
-            for i, day_name in enumerate(days_header):
-                with header_cols[i]:
-                    st.markdown(f"**{day_name}**")
-            
-            st.divider()
-            
-            week_dates = []
-            current_week = [None] * first_weekday
-            
-            for day_date in month_dates:
-                current_week.append(day_date)
-                
-                if len(current_week) == 7:
-                    week_dates.append(current_week)
-                    current_week = []
-            
-            if current_week:
-                while len(current_week) < 7:
-                    current_week.append(None)
-                week_dates.append(current_week)
-            
-            for week in week_dates:
-                week_cols = st.columns(7)
-                
-                for i, day_date in enumerate(week):
-                    with week_cols[i]:
-                        if day_date is None:
-                            st.write("")
-                        else:
-                            day_str = day_date.strftime('%Y-%m-%d')
-                            mask = (attendance_df["Date"].dt.strftime('%Y-%m-%d') == day_str) & (attendance_df["Member"] == member)
-                            
-                            current_type = ""
-                            current_notes = ""
-                            
-                            if mask.any():
-                                current_type = attendance_df[mask]["Type"].iloc[0]
-                                current_notes = attendance_df[mask]["Notes"].iloc[0]
-                            
-                            is_weekend = day_date.weekday() >= 5
-                            is_today = day_date == date.today()
-                            
-                            day_label = f"**{day_date.day}**"
-                            if is_today:
-                                day_label = f"🔵 **{day_date.day}**"
-                            elif is_weekend:
-                                day_label = f"⚪ {day_date.day}"
-                            
-                            st.markdown(day_label)
-                            
-                            att_type = st.selectbox(
-                                "Type",
-                                options=ATTENDANCE_TYPES,
-                                index=ATTENDANCE_TYPES.index(current_type) if current_type in ATTENDANCE_TYPES else 0,
-                                key=f"att_{member}_{day_str}",
-                                label_visibility="collapsed"
-                            )
-                            
-                            notes = st.text_input(
-                                "Notes",
-                                value=current_notes,
-                                key=f"notes_{member}_{day_str}",
-                                placeholder="Notes...",
-                                label_visibility="collapsed"
-                            )
-                            
-                            if att_type != current_type or notes != current_notes:
-                                attendance_df = attendance_df[~mask]
-                                
-                                if att_type:
-                                    new_entry = pd.DataFrame([{
-                                        "Date": pd.Timestamp(day_date),
-                                        "Member": member,
-                                        "Type": att_type,
-                                        "Notes": notes
-                                    }])
-                                    attendance_df = pd.concat([attendance_df, new_entry], ignore_index=True)
-                                
-                                save_to_jsonbin(attendance_df, JSONBIN_BIN_ID_ATTENDANCE)
-            
-            st.divider()
-            
-            # Monthly summary
-            member_month_data = attendance_df[
-                (attendance_df["Member"] == member) & 
-                (attendance_df["Date"].dt.year == year) & 
-                (attendance_df["Date"].dt.month == month)
-            ]
-            
-            if len(member_month_data) > 0:
-                summary_cols = st.columns(5)
-                
-                for i, att_type in enumerate(["🏢 Office", "🏠 Smart Working", "🌴 Vacation", "⏰ Hourly Leave", "💰 Time Bank"]):
-                    count = len(member_month_data[member_month_data["Type"] == att_type])
-                    with summary_cols[i]:
-                        st.metric(att_type.split()[1], count)
-    
-    st.divider()
-    st.caption(f"📅 {selected_month.strftime('%B %Y')} | Team: {', '.join(TEAM_MEMBERS)}")
+    if len(eom_df) > 0:
+        total_activities = len(eom_df)
+        completed_current_month = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
+        st.caption(f"📊 Total activities: {total_activities} | Current month completed: {completed_current_month}/{total_activities}")
