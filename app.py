@@ -225,27 +225,16 @@ def get_next_months(n=6, include_previous=True):
 # =========================
 # LOAD DATA
 # =========================
-try:
-    st.write("🔄 Loading data from Google Sheets...")
-    df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
-    df["Owner"] = df["Owner"].fillna("")
-    df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
-    df["Notes"] = df["Notes"].fillna("")
-    st.write("✅ Projects data loaded successfully")
-except Exception as e:
-    st.error(f"❌ Error loading Projects: {e}")
-    df = pd.DataFrame(columns=PROJECT_COLUMNS)
+df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
+df["Owner"] = df["Owner"].fillna("")
+df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
+df["Notes"] = df["Notes"].fillna("")
 
-try:
-    eom_df = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-    if "Last Update" not in eom_df.columns:
-        eom_df["Last Update"] = pd.Timestamp.now()
-    if "Order" not in eom_df.columns:
-        eom_df["Order"] = range(len(eom_df))
-    st.write("✅ EOM data loaded successfully")
-except Exception as e:
-    st.error(f"❌ Error loading EOM: {e}")
-    eom_df = pd.DataFrame(columns=EOM_BASE_COLUMNS)
+eom_df = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+if "Last Update" not in eom_df.columns:
+    eom_df["Last Update"] = pd.Timestamp.now()
+if "Order" not in eom_df.columns:
+    eom_df["Order"] = range(len(eom_df))
 
 # =========================
 # HEADER + NAVIGATION
