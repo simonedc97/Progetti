@@ -1429,8 +1429,5 @@ if st.session_state.section == "EOM":
         total_activities = len(eom_df)
         completed_current_month = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
         st.caption(f"📊 Total activities: {total_activities} | Current month completed: {completed_current_month}/{total_activities}")
-```
-
----
 
 
