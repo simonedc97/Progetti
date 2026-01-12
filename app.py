@@ -52,12 +52,7 @@ def save_to_gsheet(df, sheet_name):
         # Converti in lista con header
         values = [df_copy.columns.tolist()] + df_copy.fillna('').values.tolist()
         
-        # Cancella il foglio e scrivi nuovi dati
-        service.spreadsheets().values().clear(
-            spreadsheetId=spreadsheet_id,
-            range=f"{sheet_name}!A:Z"
-        ).execute()
-        
+        # Scrivi nuovi dati
         service.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id,
             range=f"{sheet_name}!A1",
@@ -449,11 +444,11 @@ if st.session_state.section == "Projects":
                     next_order += 1
                 
                 df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-                save_to_gsheet(df, "Projects")
-                st.session_state.add_project = False
-                st.session_state.task_boxes = 1
-                st.success(f"✅ Project '{project}' created successfully!")
-                st.rerun()
+                if save_to_gsheet(df, "Projects"):
+                    st.session_state.add_project = False
+                    st.session_state.task_boxes = 1
+                    st.success(f"✅ Project '{project}' created successfully!")
+                    st.rerun()
 
         if col3.button("Cancel"):
             st.session_state.add_project = False
@@ -470,11 +465,11 @@ if st.session_state.section == "Projects":
         with col1:
             if st.button("✅ Yes, delete project", key=f"confirm_del_proj_{project}", type="primary"):
                 df = df[df["Project"] != project].reset_index(drop=True)
-                save_to_gsheet(df, "Projects")
-                st.success(f"✅ Project '{project}' deleted")
-                st.session_state.confirm_delete_project = None
-                st.session_state.delete_mode = False
-                st.rerun()
+                if save_to_gsheet(df, "Projects"):
+                    st.success(f"✅ Project '{project}' deleted")
+                    st.session_state.confirm_delete_project = None
+                    st.session_state.delete_mode = False
+                    st.rerun()
         with col2:
             if st.button("❌ Cancel", key=f"cancel_del_proj_{project}"):
                 st.session_state.confirm_delete_project = None
@@ -495,10 +490,10 @@ if st.session_state.section == "Projects":
             with col1:
                 if st.button("✅ Yes, delete task", key=f"confirm_del_task_{task_name}", type="primary"):
                     df = df[~mask].reset_index(drop=True)
-                    save_to_gsheet(df, "Projects")
-                    st.success(f"✅ Task '{task_name}' deleted")
-                    st.session_state.confirm_delete_task = None
-                    st.rerun()
+                    if save_to_gsheet(df, "Projects"):
+                        st.success(f"✅ Task '{task_name}' deleted")
+                        st.session_state.confirm_delete_task = None
+                        st.rerun()
             with col2:
                 if st.button("❌ Cancel", key=f"cancel_del_task_{task_name}"):
                     st.session_state.confirm_delete_task = None
@@ -609,8 +604,8 @@ if st.session_state.section == "Projects":
                                     if status != current_status:
                                         df.loc[idx, "Progress"] = status
                                         df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
-                                        save_to_gsheet(df, "Projects")
-                                        st.rerun()
+                                        if save_to_gsheet(df, "Projects"):
+                                            st.rerun()
 
                                 with cols[1]:
                                     if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
@@ -764,12 +759,12 @@ if st.session_state.section == "Projects":
                                 if new_rows:
                                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
-                                save_to_gsheet(df, "Projects")
-                                st.session_state.edit_mode = False
-                                if add_key in st.session_state:
-                                    st.session_state[add_key] = 1
-                                st.success("✅ Changes saved successfully!")
-                                st.rerun()
+                                if save_to_gsheet(df, "Projects"):
+                                    st.session_state.edit_mode = False
+                                    if add_key in st.session_state:
+                                        st.session_state[add_key] = 1
+                                    st.success("✅ Changes saved successfully!")
+                                    st.rerun()
 
                             if col3.button("❌ Cancel", key=f"cancel_{project}"):
                                 st.session_state.edit_mode = False
@@ -985,12 +980,12 @@ if st.session_state.section == "Projects":
                                 if new_rows:
                                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
-                                save_to_gsheet(df, "Projects")
-                                st.session_state.edit_mode = False
-                                if add_key in st.session_state:
-                                    st.session_state[add_key] = 1
-                                st.success("✅ Changes saved successfully!")
-                                st.rerun()
+                                if save_to_gsheet(df, "Projects"):
+                                    st.session_state.edit_mode = False
+                                    if add_key in st.session_state:
+                                        st.session_state[add_key] = 1
+                                    st.success("✅ Changes saved successfully!")
+                                    st.rerun()
 
                             if col3.button("❌ Cancel", key=f"cancel_comp_{project}"):
                                 st.session_state.edit_mode = False
@@ -1186,10 +1181,10 @@ if st.session_state.section == "EOM":
             with col1:
                 if st.button("✅ Yes, delete activity", key=f"confirm_del_eom_{idx}", type="primary"):
                     eom_df = eom_df.drop(idx).reset_index(drop=True)
-                    save_to_gsheet(eom_df, "EOM")
-                    st.success(f"✅ Activity '{activity_name}' deleted")
-                    st.session_state.confirm_delete_eom = None
-                    st.rerun()
+                    if save_to_gsheet(eom_df, "EOM"):
+                        st.success(f"✅ Activity '{activity_name}' deleted")
+                        st.session_state.confirm_delete_eom = None
+                        st.rerun()
             with col2:
                 if st.button("❌ Cancel", key=f"cancel_del_eom_{idx}"):
                     st.session_state.confirm_delete_eom = None
@@ -1227,9 +1222,9 @@ if st.session_state.section == "EOM":
                     row[c] = "⚪"
 
                 eom_df = pd.concat([eom_df, pd.DataFrame([row])], ignore_index=True)
-                save_to_gsheet(eom_df, "EOM")
-                st.success(f"✅ Activity '{activity}' added!")
-                st.rerun()
+                if save_to_gsheet(eom_df, "EOM"):
+                    st.success(f"✅ Activity '{activity}' added!")
+                    st.rerun()
 
     st.divider()
 
@@ -1255,8 +1250,8 @@ if st.session_state.section == "EOM":
                         fresh_eom.loc[mask_current, "Order"] = prev_order
                         fresh_eom.loc[mask_prev, "Order"] = current_order
                         
-                        save_to_gsheet(fresh_eom, "EOM")
-                        st.rerun()
+                        if save_to_gsheet(fresh_eom, "EOM"):
+                            st.rerun()
             
             with header_cols[1]:
                 if idx < len(eom_df_sorted) - 1:
@@ -1272,8 +1267,8 @@ if st.session_state.section == "EOM":
                         fresh_eom.loc[mask_current, "Order"] = next_order
                         fresh_eom.loc[mask_next, "Order"] = current_order
                         
-                        save_to_gsheet(fresh_eom, "EOM")
-                        st.rerun()
+                        if save_to_gsheet(fresh_eom, "EOM"):
+                            st.rerun()
             
             with header_cols[2]:
                 expand = st.expander(f"📝 {row['Activity']}", expanded=False)
@@ -1306,9 +1301,9 @@ if st.session_state.section == "EOM":
                     fresh_eom.loc[mask, "Frequency"] = new_freq
                     fresh_eom.loc[mask, "Files"] = new_files
                     fresh_eom.loc[mask, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
-                    save_to_gsheet(fresh_eom, "EOM")
-                    st.success(f"✅ Activity updated!")
-                    st.rerun()
+                    if save_to_gsheet(fresh_eom, "EOM"):
+                        st.success(f"✅ Activity updated!")
+                        st.rerun()
 
         st.divider()
 
@@ -1331,10 +1326,10 @@ if st.session_state.section == "EOM":
             with col1:
                 if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
                     eom_df = eom_df.drop(selected_to_delete).reset_index(drop=True)
-                    save_to_gsheet(eom_df, "EOM")
-                    st.success(f"✅ {len(selected_to_delete)} activities deleted!")
-                    st.session_state.eom_bulk_delete = False
-                    st.rerun()
+                    if save_to_gsheet(eom_df, "EOM"):
+                        st.success(f"✅ {len(selected_to_delete)} activities deleted!")
+                        st.session_state.eom_bulk_delete = False
+                        st.rerun()
         else:
             st.info("👆 Select activities above to delete them")
         
@@ -1429,5 +1424,3 @@ if st.session_state.section == "EOM":
         total_activities = len(eom_df)
         completed_current_month = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
         st.caption(f"📊 Total activities: {total_activities} | Current month completed: {completed_current_month}/{total_activities}")
-
-
