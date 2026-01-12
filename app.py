@@ -1433,17 +1433,4 @@ if st.session_state.section == "EOM":
 
 ---
 
-# 📋 STEP DA SEGUIRE
 
-## **Step 1: Crea Google Sheet**
-1. Vai su https://sheets.google.com
-2. Crea un **nuovo Google Sheet**
-3. Rinominalo come vuoi (es: "RM Insurance Planner")
-4. Crea **2 fogli** (tab):
-   - Primo foglio: rinominalo `Projects`
-   - Secondo foglio: rinominalo `EOM`
-5. Copia l'**ID del foglio** dall'URL:
-```
-   https://docs.google.com/spreadsheets/d/1AbC123XyZ.../edit
-                                      ^^^^^^^^^^^^^^^^
-                                      Questo è l'ID
