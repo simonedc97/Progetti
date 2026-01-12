@@ -52,7 +52,13 @@ def save_to_gsheet(df, sheet_name):
         # Converti in lista con header
         values = [df_copy.columns.tolist()] + df_copy.fillna('').values.tolist()
         
-        # Scrivi nuovi dati
+        # IMPORTANTE: Prima cancella TUTTO il foglio
+        service.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_name}!A:ZZ"  # ← Cancella tutte le colonne
+        ).execute()
+        
+        # Poi scrivi i nuovi dati
         service.spreadsheets().values().update(
             spreadsheetId=spreadsheet_id,
             range=f"{sheet_name}!A1",
@@ -64,7 +70,6 @@ def save_to_gsheet(df, sheet_name):
     except Exception as e:
         st.error(f"Errore nel salvataggio: {e}")
         return False
-
 def load_from_gsheet(sheet_name, columns, date_cols=None):
     """Carica DataFrame da Google Sheets"""
     try:
