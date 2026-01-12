@@ -2,18 +2,14 @@ import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
 import calendar
-import requests
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
 import json
 
 # =========================
 # CONFIG
 # =========================
 st.set_page_config(page_title="RM Insurance Planner", layout="wide")
-
-# JSONBin Configuration
-JSONBIN_API_KEY = "$2a$10$O1c.ADK9BgMXBYVzCnRe2eRnLiTVK4bd7Hqd7kRLMwIISia4UHBQa"
-JSONBIN_BIN_ID_PROJECTS = "69628091d0ea881f40626147"
-JSONBIN_BIN_ID_EOM = "696280d9d0ea881f406261d7"
 
 PROJECT_COLUMNS = [
     "Area", "Project", "Task", "Owner",
@@ -26,61 +22,97 @@ EOM_BASE_COLUMNS = [
 ]
 
 # =========================
-# JSONBIN FUNCTIONS - CORRETTE
+# GOOGLE SHEETS FUNCTIONS
 # =========================
-def save_to_jsonbin(df, bin_id):
-    """Salva DataFrame su JSONBin - VERSIONE CORRETTA"""
-    url = f"https://api.jsonbin.io/v3/b/{bin_id}"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Master-Key": JSONBIN_API_KEY
-    }
-    
-    # Crea copia e gestisci date
-    data_dict = df.copy()
-    for col in data_dict.columns:
-        if pd.api.types.is_datetime64_any_dtype(data_dict[col]):
-            # Converti in stringa, gestendo NaT
-            data_dict[col] = data_dict[col].apply(
-                lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(x) else ''
-            )
-    
-    # Converti in lista di dizionari
-    data_to_save = data_dict.to_dict('records')
-    
+@st.cache_resource
+def get_gsheet_service():
+    """Crea connessione a Google Sheets"""
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/spreadsheets"]
+    )
+    return build('sheets', 'v4', credentials=credentials)
+
+def save_to_gsheet(df, sheet_name):
+    """Salva DataFrame su Google Sheets"""
     try:
-        response = requests.put(url, json=data_to_save, headers=headers)
-        if response.status_code == 200:
-            return True
-        else:
-            st.error(f"Save failed: {response.status_code}")
-            return False
+        service = get_gsheet_service()
+        spreadsheet_id = st.secrets["spreadsheet_id"]
+        
+        # Prepara i dati
+        df_copy = df.copy()
+        
+        # Converti date in stringhe
+        for col in df_copy.columns:
+            if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
+                df_copy[col] = df_copy[col].apply(
+                    lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(x) else ''
+                )
+        
+        # Converti in lista con header
+        values = [df_copy.columns.tolist()] + df_copy.fillna('').values.tolist()
+        
+        # Cancella il foglio e scrivi nuovi dati
+        service.spreadsheets().values().clear(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_name}!A:Z"
+        ).execute()
+        
+        service.spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_name}!A1",
+            valueInputOption='RAW',
+            body={'values': values}
+        ).execute()
+        
+        return True
     except Exception as e:
-        st.error(f"Error saving: {e}")
+        st.error(f"Errore nel salvataggio: {e}")
         return False
 
-def load_from_jsonbin(bin_id, columns, date_cols=None):
-    """Carica DataFrame da JSONBin"""
-    url = f"https://api.jsonbin.io/v3/b/{bin_id}/latest"
-    headers = {
-        "X-Master-Key": JSONBIN_API_KEY
-    }
-    
+def load_from_gsheet(sheet_name, columns, date_cols=None):
+    """Carica DataFrame da Google Sheets"""
     try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            data = response.json()['record']
-            if data:
-                df = pd.DataFrame(data)
-                if date_cols:
-                    for col in date_cols:
-                        if col in df.columns:
-                            df[col] = pd.to_datetime(df[col], errors='coerce')
-                return df
+        service = get_gsheet_service()
+        spreadsheet_id = st.secrets["spreadsheet_id"]
+        
+        result = service.spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id,
+            range=f"{sheet_name}!A:Z"
+        ).execute()
+        
+        values = result.get('values', [])
+        
+        if not values or len(values) < 2:
             return pd.DataFrame(columns=columns)
-        else:
-            return pd.DataFrame(columns=columns)
-    except:
+        
+        # Crea DataFrame (prima riga = header)
+        df = pd.DataFrame(values[1:], columns=values[0])
+        
+        # Gestisci colonne mancanti
+        for col in columns:
+            if col not in df.columns:
+                if col in ["Release Date", "Due Date", "Last Update"]:
+                    df[col] = pd.NaT
+                elif col == "Order":
+                    df[col] = range(len(df))
+                else:
+                    df[col] = ""
+        
+        # Converti date
+        if date_cols:
+            for col in date_cols:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+        
+        # Converti Order in int
+        if "Order" in df.columns:
+            df["Order"] = pd.to_numeric(df["Order"], errors='coerce').fillna(0).astype(int)
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Errore nel caricamento: {e}")
         return pd.DataFrame(columns=columns)
 
 # =========================
@@ -191,28 +223,14 @@ def get_next_months(n=6, include_previous=True):
     return months
 
 # =========================
-# LOAD DATA - VERSIONE ROBUSTA
+# LOAD DATA
 # =========================
-df = load_from_jsonbin(JSONBIN_BIN_ID_PROJECTS, PROJECT_COLUMNS, date_cols=["Release Date", "Due Date"])
-
-# Assicura che TUTTE le colonne necessarie esistano
-for col in PROJECT_COLUMNS:
-    if col not in df.columns:
-        if col in ["Release Date", "Due Date"]:
-            df[col] = pd.NaT
-        elif col == "Last Update":
-            df[col] = pd.Timestamp.now()
-        elif col == "Order":
-            df[col] = range(len(df))
-        else:
-            df[col] = ""
-
-# Pulisci i valori NaN
+df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
 df["Owner"] = df["Owner"].fillna("")
 df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
 df["Notes"] = df["Notes"].fillna("")
 
-eom_df = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+eom_df = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
 if "Last Update" not in eom_df.columns:
     eom_df["Last Update"] = pd.Timestamp.now()
 if "Order" not in eom_df.columns:
@@ -236,11 +254,10 @@ with nav2:
         st.rerun()
 
 st.divider()
-# ======================================================
-# 📊 PROJECTS ACTIVITIES - PARTE 2
-# Incolla questo DOPO la Parte 1
-# ======================================================
 
+# ======================================================
+# 📊 PROJECTS ACTIVITIES
+# ======================================================
 if st.session_state.section == "Projects":
     
     col_title, col_actions = st.columns([6, 4])
@@ -355,7 +372,7 @@ if st.session_state.section == "Projects":
         
         df = filtered_df
         
-        original_df = load_from_jsonbin(JSONBIN_BIN_ID_PROJECTS, PROJECT_COLUMNS, date_cols=['Release Date', 'Due Date'])
+        original_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=['Release Date', 'Due Date'])
         st.info(f"📊 Showing {len(df)} of {len(original_df)} tasks")
         st.divider()
 
@@ -432,7 +449,7 @@ if st.session_state.section == "Projects":
                     next_order += 1
                 
                 df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-                save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                save_to_gsheet(df, "Projects")
                 st.session_state.add_project = False
                 st.session_state.task_boxes = 1
                 st.success(f"✅ Project '{project}' created successfully!")
@@ -453,7 +470,7 @@ if st.session_state.section == "Projects":
         with col1:
             if st.button("✅ Yes, delete project", key=f"confirm_del_proj_{project}", type="primary"):
                 df = df[df["Project"] != project].reset_index(drop=True)
-                save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                save_to_gsheet(df, "Projects")
                 st.success(f"✅ Project '{project}' deleted")
                 st.session_state.confirm_delete_project = None
                 st.session_state.delete_mode = False
@@ -478,7 +495,7 @@ if st.session_state.section == "Projects":
             with col1:
                 if st.button("✅ Yes, delete task", key=f"confirm_del_task_{task_name}", type="primary"):
                     df = df[~mask].reset_index(drop=True)
-                    save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                    save_to_gsheet(df, "Projects")
                     st.success(f"✅ Task '{task_name}' deleted")
                     st.session_state.confirm_delete_task = None
                     st.rerun()
@@ -486,14 +503,12 @@ if st.session_state.section == "Projects":
                 if st.button("❌ Cancel", key=f"cancel_del_task_{task_name}"):
                     st.session_state.confirm_delete_task = None
                     st.rerun()
-        st.stop()
-# ======================================================
-# 📁 PROJECT VIEW - PARTE 3A - IN PROGRESS PROJECTS
-# Incolla questo DOPO la Parte 2
-# ======================================================
+            st.stop()
 
-    if not st.session_state.add_project and len(df) > 0 and "Project" in df.columns:
-        # Separa progetti In Progress e Completed
+    # ======================================================
+    # 📁 PROJECT VIEW
+    # ======================================================
+    if not st.session_state.add_project and len(df) > 0:
         in_progress_projects = []
         completed_projects = []
         
@@ -506,7 +521,6 @@ if st.session_state.section == "Projects":
             else:
                 in_progress_projects.append(project)
         
-        # Ordina progetti alfabeticamente
         in_progress_projects.sort()
         completed_projects.sort()
         
@@ -514,7 +528,6 @@ if st.session_state.section == "Projects":
         if in_progress_projects:
             st.markdown("### 📂 In Progress")
             
-            # Raggruppa per Area
             in_progress_by_area = {}
             for project in in_progress_projects:
                 area = df[df["Project"] == project]["Area"].iloc[0]
@@ -522,7 +535,6 @@ if st.session_state.section == "Projects":
                     in_progress_by_area[area] = []
                 in_progress_by_area[area].append(project)
             
-            # Ordina aree alfabeticamente e progetti all'interno
             for area in sorted(in_progress_by_area.keys()):
                 st.markdown(f"#### 🏢 {area}")
                 
@@ -530,7 +542,6 @@ if st.session_state.section == "Projects":
                     proj_df = df[df["Project"] == project]
                     completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
                     
-                    # Header del progetto
                     header_text = f"📁 {project} — {completion}%"
                     
                     if st.session_state.delete_mode:
@@ -547,7 +558,6 @@ if st.session_state.section == "Projects":
                     with expand:
                         st.progress(completion / 100)
 
-                        # TASK VIEW (NON IN EDIT MODE)
                         if not st.session_state.edit_mode:
                             for idx, r in proj_df.iterrows():
                                 cols = st.columns([10, 1])
@@ -555,12 +565,10 @@ if st.session_state.section == "Projects":
                                     st.markdown(f"**{r['Task']}**")
                                     st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
                                     
-                                    # Dates info
                                     release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
                                     due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
                                     st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
                                     
-                                    # GR Number
                                     gr_text = r.get('GR/Mail Object', '')
                                     if gr_text:
                                         parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
@@ -573,7 +581,6 @@ if st.session_state.section == "Projects":
                                             with st.expander("📧 Mail Object"):
                                                 st.text(parts[1].strip())
                                     
-                                    # Notes section con auto-save
                                     current_notes = r.get('Notes', '')
                                     if pd.isna(current_notes):
                                         current_notes = ''
@@ -588,7 +595,7 @@ if st.session_state.section == "Projects":
                                     if notes != current_notes:
                                         df.loc[idx, "Notes"] = notes
                                         df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
-                                        save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                                        save_to_gsheet(df, "Projects")
 
                                     current_status = r["Progress"]
                                     status = st.radio(
@@ -602,7 +609,7 @@ if st.session_state.section == "Projects":
                                     if status != current_status:
                                         df.loc[idx, "Progress"] = status
                                         df.loc[idx, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
-                                        save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                                        save_to_gsheet(df, "Projects")
                                         st.rerun()
 
                                 with cols[1]:
@@ -612,7 +619,6 @@ if st.session_state.section == "Projects":
                                 
                                 st.divider()
 
-                        # ✏️ EDIT MODE
                         if st.session_state.edit_mode:
                             st.markdown("### ✏️ Edit project")
                             new_area = st.text_input("Area", area, key=f"ea_{project}")
@@ -758,7 +764,7 @@ if st.session_state.section == "Projects":
                                 if new_rows:
                                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
-                                save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                                save_to_gsheet(df, "Projects")
                                 st.session_state.edit_mode = False
                                 if add_key in st.session_state:
                                     st.session_state[add_key] = 1
@@ -772,16 +778,11 @@ if st.session_state.section == "Projects":
                                 st.rerun()
             
             st.divider()
-# ======================================================
-# COMPLETED PROJECTS SECTION - PARTE 3B
-# Incolla questo DOPO la Parte 3A
-# ======================================================
-
+        
         # ===== COMPLETED SECTION =====
         if completed_projects:
             st.markdown("### ✅ Completed")
             
-            # Raggruppa per Area
             completed_by_area = {}
             for project in completed_projects:
                 area = df[df["Project"] == project]["Area"].iloc[0]
@@ -789,7 +790,6 @@ if st.session_state.section == "Projects":
                     completed_by_area[area] = []
                 completed_by_area[area].append(project)
             
-            # Ordina aree alfabeticamente e progetti all'interno
             for area in sorted(completed_by_area.keys()):
                 st.markdown(f"#### 🏢 {area}")
                 
@@ -813,7 +813,6 @@ if st.session_state.section == "Projects":
                     with expand:
                         st.progress(completion / 100)
                         
-                        # TASK VIEW (NON IN EDIT MODE)
                         if not st.session_state.edit_mode:
                             for idx, r in proj_df.iterrows():
                                 st.markdown(f"**{r['Task']}**")
@@ -822,7 +821,6 @@ if st.session_state.section == "Projects":
                                 due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
                                 st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
                                 
-                                # GR Number and Mail Object
                                 gr_text = r.get('GR/Mail Object', '')
                                 if gr_text:
                                     parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
@@ -835,7 +833,6 @@ if st.session_state.section == "Projects":
                                         with st.expander("📧 Mail Object"):
                                             st.text(parts[1].strip())
                                 
-                                # Notes section - Read only per progetti completati
                                 if r.get('Notes') and r['Notes']:
                                     with st.expander("📝 Notes"):
                                         st.text(r['Notes'])
@@ -843,7 +840,6 @@ if st.session_state.section == "Projects":
                                 st.write(f"✅ Status: {r['Progress']}")
                                 st.divider()
                         
-                        # ✏️ EDIT MODE - IDENTICAL TO IN PROGRESS
                         if st.session_state.edit_mode:
                             st.markdown("### ✏️ Edit completed project")
                             new_area = st.text_input("Area", area, key=f"ea_comp_{project}")
@@ -989,7 +985,7 @@ if st.session_state.section == "Projects":
                                 if new_rows:
                                     df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
 
-                                save_to_jsonbin(df, JSONBIN_BIN_ID_PROJECTS)
+                                save_to_gsheet(df, "Projects")
                                 st.session_state.edit_mode = False
                                 if add_key in st.session_state:
                                     st.session_state[add_key] = 1
@@ -1005,22 +1001,19 @@ if st.session_state.section == "Projects":
     elif not st.session_state.add_project and len(df) == 0:
         st.info("📝 No projects yet. Click '➕ Project' to create your first project!")
 
-    # FOOTER
     st.divider()
-    if len(df) > 0 and "Progress" in df.columns:
+    if len(df) > 0:
         total_tasks = len(df)
         completed_tasks = len(df[df["Progress"] == "Completed"])
         st.caption(f"📊 Total projects: {df['Project'].nunique()} | Tasks: {completed_tasks}/{total_tasks} completed ({int(completed_tasks/total_tasks*100)}%)")
-    # ======================================================
-# 📅 END OF MONTH ACTIVITIES - PARTE 4
-# Incolla questo DOPO la Parte 3B
-# ======================================================
 
+# ======================================================
+# 📅 END OF MONTH ACTIVITIES
+# ======================================================
 if st.session_state.section == "EOM":
 
     st.subheader("📅 End of Month Activities")
     
-    # Display last update
     if len(eom_df) > 0 and "Last Update" in eom_df.columns:
         try:
             last_update_eom = pd.to_datetime(eom_df["Last Update"]).max()
@@ -1028,13 +1021,11 @@ if st.session_state.section == "EOM":
         except:
             st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
 
-    # Calcola i mesi (include mese precedente come corrente)
     months = get_next_months(6, include_previous=True)
     eom_dates = [last_working_day(y, m) for y, m in months]
     month_cols = [d.strftime("%d %B %Y") for d in eom_dates]
     current_month_col = month_cols[0]
 
-    # INIT COLUMNS
     for col in EOM_BASE_COLUMNS:
         if col not in eom_df.columns:
             if col == "🗑️ Delete":
@@ -1056,7 +1047,6 @@ if st.session_state.section == "EOM":
                 if all(v in ["🟢", "⚪"] for v in values):
                     completed_cols.append(col)
 
-    # HEADER WITH ACTIONS
     col1, col2, col3, col4, col5 = st.columns([2.5, 1, 1, 1, 1])
     with col1:
         st.caption(f"🎯 **Current working month**: {current_month_col}")
@@ -1080,7 +1070,6 @@ if st.session_state.section == "EOM":
             st.session_state.eom_bulk_delete = not st.session_state.eom_bulk_delete
             st.rerun()
 
-    # MONTH MANAGER
     if st.session_state.show_month_manager:
         with st.expander("📅 Month Visibility Manager", expanded=True):
             st.markdown("**Manage which months to display in the table**")
@@ -1134,7 +1123,6 @@ if st.session_state.section == "EOM":
                     st.session_state.hidden_months = []
                     st.rerun()
 
-    # FILTERS SECTION FOR EOM
     if st.session_state.show_eom_filters and len(eom_df) > 0:
         with st.expander("🔍 Filters", expanded=True):
             col1, col2, col3, col4 = st.columns(4)
@@ -1167,7 +1155,6 @@ if st.session_state.section == "EOM":
                 st.session_state.reset_eom_filters_flag += 1
                 st.rerun()
         
-        # Apply filters
         filtered_eom_df = eom_df.copy()
         
         if selected_eom_area != "All":
@@ -1186,11 +1173,10 @@ if st.session_state.section == "EOM":
         
         eom_df = filtered_eom_df
         
-        st.info(f"📊 Showing {len(eom_df)} of {len(load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS))} activities")
+        st.info(f"📊 Showing {len(eom_df)} of {len(load_from_gsheet('EOM', EOM_BASE_COLUMNS))} activities")
 
     st.divider()
 
-    # CONFIRM DELETE EOM ACTIVITY
     if st.session_state.confirm_delete_eom is not None:
         idx = st.session_state.confirm_delete_eom
         if idx in eom_df.index:
@@ -1200,7 +1186,7 @@ if st.session_state.section == "EOM":
             with col1:
                 if st.button("✅ Yes, delete activity", key=f"confirm_del_eom_{idx}", type="primary"):
                     eom_df = eom_df.drop(idx).reset_index(drop=True)
-                    save_to_jsonbin(eom_df, JSONBIN_BIN_ID_EOM)
+                    save_to_gsheet(eom_df, "EOM")
                     st.success(f"✅ Activity '{activity_name}' deleted")
                     st.session_state.confirm_delete_eom = None
                     st.rerun()
@@ -1210,12 +1196,6 @@ if st.session_state.section == "EOM":
                     st.rerun()
         st.stop()
 
-# ======================================================
-# NELLA PARTE 4 - SEZIONE "ADD ACTIVITY"
-# Cerca il bottone "➕ Add activity" e SOSTITUISCI l'intero blocco
-# ======================================================
-
-    # ADD ACTIVITY - VERSIONE CORRETTA
     with st.expander("➕ Add new End-of-Month Activity", expanded=st.session_state.eom_edit_mode):
         c1, c2, c3 = st.columns(3)
         area = c1.text_input("Area", key="eom_area")
@@ -1231,28 +1211,7 @@ if st.session_state.section == "EOM":
             if not activity:
                 st.error("❌ Activity name is required!")
             else:
-                # Ricarica i dati freschi per evitare conflitti
-                fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
-                
-                # Assicura che le colonne base esistano
-                for col in EOM_BASE_COLUMNS:
-                    if col not in fresh_eom.columns:
-                        if col == "🗑️ Delete":
-                            fresh_eom[col] = False
-                        elif col in ["Last Update"]:
-                            fresh_eom[col] = pd.Timestamp.now()
-                        elif col == "Order":
-                            fresh_eom[col] = range(len(fresh_eom))
-                        else:
-                            fresh_eom[col] = ""
-                
-                # Assicura che le colonne mesi esistano
-                for c in month_cols:
-                    if c not in fresh_eom.columns:
-                        fresh_eom[c] = "⚪"
-                
-                next_order = fresh_eom["Order"].max() + 1 if len(fresh_eom) > 0 else 0
-                
+                next_order = eom_df["Order"].max() + 1 if len(eom_df) > 0 else 0
                 row = {
                     "Area": area,
                     "ID Macro": id_macro,
@@ -1267,23 +1226,13 @@ if st.session_state.section == "EOM":
                 for c in month_cols:
                     row[c] = "⚪"
 
-                fresh_eom = pd.concat([fresh_eom, pd.DataFrame([row])], ignore_index=True)
-                
-                # Pulisci il DataFrame prima di salvare
-                fresh_eom = clean_eom_dataframe(fresh_eom, month_cols)
-                
-                if save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM):
-                    st.success(f"✅ Activity '{activity}' added!")
-                    # Forza il reload della pagina per mostrare la nuova attività
-                    st.rerun()
-                else:
-                    st.error("❌ Failed to save activity. Please try again.")
-# ======================================================
-# EOM EDIT MODE E TABLE VIEW - PARTE 5 (FINALE)
-# Incolla questo DOPO la Parte 4
-# ======================================================
+                eom_df = pd.concat([eom_df, pd.DataFrame([row])], ignore_index=True)
+                save_to_gsheet(eom_df, "EOM")
+                st.success(f"✅ Activity '{activity}' added!")
+                st.rerun()
 
-    # EDIT MODE - LIST VIEW
+    st.divider()
+
     if st.session_state.eom_edit_mode and len(eom_df) > 0:
         st.subheader("✏️ Edit Activities")
         
@@ -1299,14 +1248,14 @@ if st.session_state.section == "EOM":
                         prev_row = eom_df_sorted.iloc[idx-1]
                         prev_order = prev_row["Order"]
                         
-                        fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+                        fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
                         mask_current = fresh_eom["Order"] == current_order
                         mask_prev = fresh_eom["Order"] == prev_order
                         
                         fresh_eom.loc[mask_current, "Order"] = prev_order
                         fresh_eom.loc[mask_prev, "Order"] = current_order
                         
-                        save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM)
+                        save_to_gsheet(fresh_eom, "EOM")
                         st.rerun()
             
             with header_cols[1]:
@@ -1316,14 +1265,14 @@ if st.session_state.section == "EOM":
                         next_row = eom_df_sorted.iloc[idx+1]
                         next_order = next_row["Order"]
                         
-                        fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+                        fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
                         mask_current = fresh_eom["Order"] == current_order
                         mask_next = fresh_eom["Order"] == next_order
                         
                         fresh_eom.loc[mask_current, "Order"] = next_order
                         fresh_eom.loc[mask_next, "Order"] = current_order
                         
-                        save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM)
+                        save_to_gsheet(fresh_eom, "EOM")
                         st.rerun()
             
             with header_cols[2]:
@@ -1348,7 +1297,7 @@ if st.session_state.section == "EOM":
                 new_files = c5.text_input("Files", row["Files"], key=f"edit_files_{idx}_{row['Activity'][:10]}")
                 
                 if st.button("💾 Save changes", key=f"save_eom_{idx}_{row['Activity'][:10]}", type="primary"):
-                    fresh_eom = load_from_jsonbin(JSONBIN_BIN_ID_EOM, EOM_BASE_COLUMNS)
+                    fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
                     mask = fresh_eom["Order"] == row["Order"]
                     fresh_eom.loc[mask, "Area"] = new_area
                     fresh_eom.loc[mask, "ID Macro"] = new_macro
@@ -1357,13 +1306,12 @@ if st.session_state.section == "EOM":
                     fresh_eom.loc[mask, "Frequency"] = new_freq
                     fresh_eom.loc[mask, "Files"] = new_files
                     fresh_eom.loc[mask, "Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
-                    save_to_jsonbin(fresh_eom, JSONBIN_BIN_ID_EOM)
+                    save_to_gsheet(fresh_eom, "EOM")
                     st.success(f"✅ Activity updated!")
                     st.rerun()
 
         st.divider()
 
-    # DELETE MODE (Multiple Selection)
     if st.session_state.eom_bulk_delete and len(eom_df) > 0:
         st.warning("🗑️ **Delete Mode**: Select activities to delete")
         
@@ -1383,7 +1331,7 @@ if st.session_state.section == "EOM":
             with col1:
                 if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
                     eom_df = eom_df.drop(selected_to_delete).reset_index(drop=True)
-                    save_to_jsonbin(eom_df, JSONBIN_BIN_ID_EOM)
+                    save_to_gsheet(eom_df, "EOM")
                     st.success(f"✅ {len(selected_to_delete)} activities deleted!")
                     st.session_state.eom_bulk_delete = False
                     st.rerun()
@@ -1392,7 +1340,6 @@ if st.session_state.section == "EOM":
         
         st.divider()
 
-    # TABLE VIEW (NON EDIT MODE & NON BULK DELETE)
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) > 0:
         eom_df = eom_df.sort_values('Order').reset_index(drop=True)
         
@@ -1434,11 +1381,10 @@ if st.session_state.section == "EOM":
                     eom_df[col] = edited[col]
                     eom_df["Last Update"] = pd.Timestamp.now() + pd.Timedelta(hours=1)
 
-        save_to_jsonbin(eom_df, JSONBIN_BIN_ID_EOM)
+        save_to_gsheet(eom_df, "EOM")
 
         st.divider()
         
-        # STATISTICS
         total_activities = len(eom_df)
         completed_current = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
         progress_pct = int((completed_current / total_activities * 100)) if total_activities > 0 else 0
@@ -1458,7 +1404,6 @@ if st.session_state.section == "EOM":
             else:
                 st.warning(f"🚀 Let's get started!")
 
-        # Mostra stato delle colonne visibili
         st.caption("**Month Overview:**")
         visible_month_cols = [col for col in visible_cols if col in month_cols][:4]
         if visible_month_cols:
@@ -1479,9 +1424,26 @@ if st.session_state.section == "EOM":
     elif not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) == 0:
         st.info("📝 No End-of-Month activities yet. Add your first activity above!")
 
-    # Footer
     st.divider()
     if len(eom_df) > 0:
         total_activities = len(eom_df)
         completed_current_month = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
         st.caption(f"📊 Total activities: {total_activities} | Current month completed: {completed_current_month}/{total_activities}")
+```
+
+---
+
+# 📋 STEP DA SEGUIRE
+
+## **Step 1: Crea Google Sheet**
+1. Vai su https://sheets.google.com
+2. Crea un **nuovo Google Sheet**
+3. Rinominalo come vuoi (es: "RM Insurance Planner")
+4. Crea **2 fogli** (tab):
+   - Primo foglio: rinominalo `Projects`
+   - Secondo foglio: rinominalo `EOM`
+5. Copia l'**ID del foglio** dall'URL:
+```
+   https://docs.google.com/spreadsheets/d/1AbC123XyZ.../edit
+                                      ^^^^^^^^^^^^^^^^
+                                      Questo è l'ID
