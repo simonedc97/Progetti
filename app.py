@@ -25,6 +25,15 @@ EOM_BASE_COLUMNS = [
 ]
 
 # =========================
+# ✅ NEW: EOM STATUS DOTS (white default + gray/green/red)
+# =========================
+EOM_WHITE = "⚪"   # default / not answered
+EOM_GRAY  = "⚫"   # not to do (excluded from denominator)
+EOM_GREEN = "🟢"   # done
+EOM_RED   = "🔴"   # not done
+EOM_STATUS_OPTIONS = [EOM_WHITE, EOM_GRAY, EOM_GREEN, EOM_RED]
+
+# =========================
 # GOOGLE SHEETS FUNCTIONS - VERSIONE OTTIMIZZATA
 # =========================
 @st.cache_resource
@@ -40,18 +49,18 @@ def save_to_gsheet(df, sheet_name):
     """Salva DataFrame su Google Sheets - VERSIONE STABILE"""
     max_retries = 3
     retry_count = 0
-    
+
     while retry_count < max_retries:
         try:
             service = get_gsheet_service()
             spreadsheet_id = st.secrets["spreadsheet_id"]
-            
+
             # Imposta timeout
             socket.setdefaulttimeout(15)
-            
+
             # Prepara i dati in modo sicuro
             df_copy = df.copy()
-            
+
             # Converti TUTTI i tipi in stringhe in modo sicuro
             for col in df_copy.columns:
                 if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
@@ -64,19 +73,19 @@ def save_to_gsheet(df, sheet_name):
                     df_copy[col] = df_copy[col].apply(
                         lambda x: '' if pd.isna(x) else str(x)
                     )
-            
+
             # Converti in lista (header + dati)
             values = [df_copy.columns.tolist()] + df_copy.values.tolist()
-            
+
             # Prima cancella tutto il foglio
             service.spreadsheets().values().clear(
                 spreadsheetId=spreadsheet_id,
                 range=f"{sheet_name}!A1:ZZ10000"
             ).execute()
-            
+
             # Aspetta un momento per assicurare che la cancellazione sia completata
             time.sleep(0.3)
-            
+
             # Poi scrivi i nuovi dati
             service.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id,
@@ -84,12 +93,12 @@ def save_to_gsheet(df, sheet_name):
                 valueInputOption='RAW',
                 body={'values': values}
             ).execute()
-            
+
             # Invalida cache dopo salvataggio
             st.cache_data.clear()
-            
+
             return True
-            
+
         except socket.timeout:
             retry_count += 1
             if retry_count < max_retries:
@@ -107,39 +116,39 @@ def save_to_gsheet(df, sheet_name):
             else:
                 st.error(f"❌ Errore nel salvataggio dopo {max_retries} tentativi: {e}")
                 return False
-    
+
     return False
 
 def load_from_gsheet(sheet_name, columns, date_cols=None):
     """Carica DataFrame da Google Sheets - VERSIONE OTTIMIZZATA"""
     max_retries = 3
     retry_count = 0
-    
+
     while retry_count < max_retries:
         try:
             service = get_gsheet_service()
             spreadsheet_id = st.secrets["spreadsheet_id"]
-            
+
             # Imposta timeout
             socket.setdefaulttimeout(15)
-            
+
             result = service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
                 range=f"{sheet_name}!A:ZZ"
             ).execute()
-            
+
             values = result.get('values', [])
-            
+
             # Se non ci sono dati, ritorna DataFrame vuoto
             if not values or len(values) < 2:
                 df = pd.DataFrame(columns=columns)
                 if "Order" in columns:
                     df["Order"] = []
                 return df
-            
+
             # Crea DataFrame (prima riga = header)
             df = pd.DataFrame(values[1:], columns=values[0])
-            
+
             # Gestisci colonne mancanti
             for col in columns:
                 if col not in df.columns:
@@ -151,25 +160,25 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
                         df[col] = False
                     else:
                         df[col] = ""
-            
+
             # Converti date
             if date_cols:
                 for col in date_cols:
                     if col in df.columns:
                         df[col] = pd.to_datetime(df[col], errors='coerce')
-            
+
             # Converti Order in int
             if "Order" in df.columns:
                 df["Order"] = pd.to_numeric(df["Order"], errors='coerce').fillna(0).astype(int)
-            
+
             # Converti booleani
             if "🗑️ Delete" in df.columns:
                 df["🗑️ Delete"] = df["🗑️ Delete"].apply(
                     lambda x: True if str(x).lower() in ['true', '1', 'yes'] else False
                 )
-            
+
             return df
-            
+
         except socket.timeout:
             retry_count += 1
             if retry_count < max_retries:
@@ -187,7 +196,7 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
             else:
                 st.error(f"❌ Errore nel caricamento dopo {max_retries} tentativi: {e}")
                 return pd.DataFrame(columns=columns)
-    
+
     return pd.DataFrame(columns=columns)
 
 # =========================
@@ -260,7 +269,7 @@ def parse_id(id_str):
     """Estrae macro e micro ID da una stringa come '1.2' o '1'"""
     if not id_str or pd.isna(id_str):
         return None, None
-    
+
     id_str = str(id_str).strip()
     if '.' in id_str:
         parts = id_str.split('.')
@@ -280,79 +289,97 @@ def renumber_eom_ids(df):
     """Rinumera automaticamente gli ID Macro e Micro del DataFrame EOM"""
     if len(df) == 0:
         return df
-    
+
     df = df.copy()
-    
+
     # Parsing degli ID esistenti
     df['parsed_macro'] = df['ID Macro'].apply(lambda x: parse_id(x)[0])
     df['parsed_micro'] = df['ID Micro'].apply(lambda x: parse_id(x)[1])
-    
+
     # Ordina per macro e micro ID
     df = df.sort_values(['parsed_macro', 'parsed_micro'], na_position='last').reset_index(drop=True)
-    
+
     # Rinumerazione
     new_macro_counter = 1
     macro_mapping = {}
-    
+
     for idx, row in df.iterrows():
         old_macro = row['parsed_macro']
-        
+
         if pd.isna(old_macro):
             continue
-        
+
         # Se questo macro ID non è ancora stato mappato
         if old_macro not in macro_mapping:
             macro_mapping[old_macro] = new_macro_counter
             new_macro_counter += 1
-        
+
         new_macro = macro_mapping[old_macro]
-        
+
         # Aggiorna ID Macro
         df.loc[idx, 'ID Macro'] = str(new_macro)
-    
+
     # Rinumerazione Micro ID per ciascun gruppo Macro
     for macro_id in df['ID Macro'].unique():
         if not macro_id or pd.isna(macro_id):
             continue
-        
+
         mask = df['ID Macro'] == macro_id
         micro_rows = df[mask & df['parsed_micro'].notna()]
-        
+
         if len(micro_rows) > 0:
             new_micro_counter = 1
             for idx in micro_rows.index:
                 df.loc[idx, 'ID Micro'] = f"{macro_id}.{new_micro_counter}"
                 new_micro_counter += 1
-    
+
     # Rimuovi colonne temporanee
     df = df.drop(['parsed_macro', 'parsed_micro'], axis=1)
-    
+
     return df
 
 def clean_eom_dataframe(df, month_cols):
     """Pulisce il DataFrame EOM assicurando i tipi corretti"""
     df = df.copy()
-    
+
     for col in month_cols:
         if col in df.columns:
-            df[col] = df[col].fillna("⚪")
-            df[col] = df[col].replace("", "⚪")
-            df[col] = df[col].apply(lambda x: 
-                "🟢" if str(x) in ["True", "true", "Done", "🟢", "1"] 
-                else "🔴" if str(x) in ["False", "false", "Undone", "🔴", "0"]
-                else "⚪"
-            )
-    
+            df[col] = df[col].fillna(EOM_WHITE)
+            df[col] = df[col].replace("", EOM_WHITE)
+
+            # ✅ NEW: include GRAY, and normalize legacy values
+            def _norm_status(x):
+                s = str(x).strip()
+
+                # Keep if already one of our dots
+                if s in EOM_STATUS_OPTIONS:
+                    return s
+
+                # legacy / boolean-like -> map
+                if s in ["True", "true", "Done", "1"]:
+                    return EOM_GREEN
+                if s in ["False", "false", "Undone", "0"]:
+                    return EOM_RED
+
+                # gray / n-a like strings
+                if s.lower() in ["na", "n/a", "not applicable", "not to do", "skip", "skipped", "excluded", "no"]:
+                    return EOM_GRAY
+
+                # default
+                return EOM_WHITE
+
+            df[col] = df[col].apply(_norm_status)
+
     if "🗑️ Delete" in df.columns:
         df["🗑️ Delete"] = df["🗑️ Delete"].apply(
             lambda x: True if str(x).lower() in ['true', '1', 'yes'] else False
         )
-    
+
     text_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
     for col in text_cols:
         if col in df.columns:
             df[col] = df[col].fillna("").astype(str)
-    
+
     return df
 
 def last_working_day(year, month):
@@ -366,7 +393,7 @@ def get_next_months(n=6, include_previous=True):
     """Genera i prossimi N mesi"""
     today = date.today()
     months = []
-    
+
     if include_previous:
         prev_month = today.month - 1
         prev_year = today.year
@@ -374,7 +401,7 @@ def get_next_months(n=6, include_previous=True):
             prev_month = 12
             prev_year -= 1
         months.append((prev_year, prev_month))
-    
+
     for i in range(n):
         month = today.month + i
         year = today.year
@@ -382,12 +409,12 @@ def get_next_months(n=6, include_previous=True):
             month -= 12
             year += 1
         months.append((year, month))
-    
+
     if (2025, 12) not in months:
         months.append((2025, 12))
-    
+
     months = sorted(list(set(months)))
-    
+
     return months
 
 # =========================
@@ -403,7 +430,7 @@ st.title("🗂️ RM Insurance Planner")
 
 nav1, nav2 = st.columns(2)
 with nav1:
-    if st.button("📊 Projects Activities", use_container_width=True, 
+    if st.button("📊 Projects Activities", use_container_width=True,
                  type="primary" if st.session_state.section == "Projects" else "secondary"):
         st.session_state.section = "Projects"
         st.rerun()
@@ -419,7 +446,7 @@ st.divider()
 # 📊 PROJECTS ACTIVITIES
 # ======================================================
 if st.session_state.section == "Projects":
-    
+
     col_title, col_actions = st.columns([6, 4])
     with col_title:
         st.subheader("📊 Projects Activities")
@@ -455,68 +482,68 @@ if st.session_state.section == "Projects":
     if st.session_state.show_filters and len(df) > 0:
         with st.expander("🔍 Filters", expanded=True):
             col1, col2, col3, col4 = st.columns(4)
-            
+
             with col1:
                 areas = ["All"] + sorted(df["Area"].dropna().unique().tolist())
-                selected_area = st.selectbox("Area", areas, 
-                                            index=0,
-                                            key=f"filter_area_{st.session_state.reset_filters_flag}")
-            
+                selected_area = st.selectbox("Area", areas,
+                                             index=0,
+                                             key=f"filter_area_{st.session_state.reset_filters_flag}")
+
             with col2:
                 owners = ["All"] + sorted(df["Owner"].dropna().unique().tolist())
-                selected_owner = st.selectbox("Owner", owners, 
-                                             index=0,
-                                             key=f"filter_owner_{st.session_state.reset_filters_flag}")
-            
+                selected_owner = st.selectbox("Owner", owners,
+                                              index=0,
+                                              key=f"filter_owner_{st.session_state.reset_filters_flag}")
+
             with col3:
                 statuses = ["All"] + progress_values
-                selected_status = st.selectbox("Status", statuses, 
-                                              index=0,
-                                              key=f"filter_status_{st.session_state.reset_filters_flag}")
-            
+                selected_status = st.selectbox("Status", statuses,
+                                               index=0,
+                                               key=f"filter_status_{st.session_state.reset_filters_flag}")
+
             with col4:
                 priorities = ["All", "Low", "Important", "Urgent"]
-                selected_priority = st.selectbox("Priority", priorities, 
-                                                index=0,
-                                                key=f"filter_priority_{st.session_state.reset_filters_flag}")
-            
+                selected_priority = st.selectbox("Priority", priorities,
+                                                 index=0,
+                                                 key=f"filter_priority_{st.session_state.reset_filters_flag}")
+
             col5, col6, col7 = st.columns(3)
-            
+
             with col5:
-                due_filter = st.selectbox("Due Date", 
-                                         ["All", "Overdue", "This Week", "This Month", "No Date"], 
-                                         index=0,
-                                         key=f"filter_due_{st.session_state.reset_filters_flag}")
-            
+                due_filter = st.selectbox("Due Date",
+                                          ["All", "Overdue", "This Week", "This Month", "No Date"],
+                                          index=0,
+                                          key=f"filter_due_{st.session_state.reset_filters_flag}")
+
             with col6:
                 projects = ["All"] + sorted(df["Project"].dropna().unique().tolist())
-                selected_project = st.selectbox("Project", projects, 
-                                               index=0,
-                                               key=f"filter_project_{st.session_state.reset_filters_flag}")
-            
+                selected_project = st.selectbox("Project", projects,
+                                                index=0,
+                                                key=f"filter_project_{st.session_state.reset_filters_flag}")
+
             with col7:
                 if st.button("🔄 Reset Filters", use_container_width=True):
                     st.session_state.reset_filters_flag += 1
                     st.rerun()
-        
+
         # Apply filters
         filtered_df = df.copy()
-        
+
         if selected_area != "All":
             filtered_df = filtered_df[filtered_df["Area"] == selected_area]
-        
+
         if selected_owner != "All":
             filtered_df = filtered_df[filtered_df["Owner"] == selected_owner]
-        
+
         if selected_status != "All":
             filtered_df = filtered_df[filtered_df["Progress"] == selected_status]
-        
+
         if selected_priority != "All":
             filtered_df = filtered_df[filtered_df["Priority"] == selected_priority]
-        
+
         if selected_project != "All":
             filtered_df = filtered_df[filtered_df["Project"] == selected_project]
-        
+
         if due_filter != "All":
             today = pd.Timestamp(date.today())
             if due_filter == "Overdue":
@@ -529,9 +556,9 @@ if st.session_state.section == "Projects":
                 filtered_df = filtered_df[(filtered_df["Due Date"] >= today) & (filtered_df["Due Date"] <= month_end)]
             elif due_filter == "No Date":
                 filtered_df = filtered_df[filtered_df["Due Date"].isna()]
-        
+
         df = filtered_df
-        
+
         original_df = load_projects_data()
         st.info(f"📊 Showing {len(df)} of {len(original_df)} tasks")
         st.divider()
@@ -551,29 +578,29 @@ if st.session_state.section == "Projects":
                 st.markdown(f"**Task {i+1}**")
                 t = st.text_input("Task", key=f"new_task_{i}")
                 o = st.text_input("Owner (optional)", key=f"new_owner_{i}")
-                
+
                 col_a, col_b = st.columns(2)
                 with col_a:
                     p = st.selectbox("Status", progress_values, key=f"new_prog_{i}")
                 with col_b:
                     pr = st.selectbox("Priority", ["Low", "Important", "Urgent"], key=f"new_prio_{i}")
-                
+
                 col_c, col_d = st.columns(2)
                 with col_c:
                     r = st.date_input("Release Date (optional)", value=None, key=f"new_rel_{i}")
                 with col_d:
                     d = st.date_input("Due Date (optional)", value=None, key=f"new_due_{i}")
-                
+
                 col_gr, col_mail = st.columns(2)
                 with col_gr:
                     gr = st.text_area("📋 GR Number (optional)", key=f"new_gr_{i}", height=80)
                 with col_mail:
                     mail = st.text_area("📧 Mail Object (optional)", key=f"new_mail_{i}", height=80)
-                
+
                 gr_combined = f"{gr}\n{mail}" if gr or mail else ""
-                
+
                 notes = st.text_area("Notes (optional)", key=f"new_notes_{i}", height=60)
-                
+
                 if t:
                     tasks.append((t, o, p, pr, r, d, gr_combined, notes))
                 st.divider()
@@ -590,7 +617,7 @@ if st.session_state.section == "Projects":
                 st.error("❌ Add at least one task!")
             else:
                 fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
-                
+
                 new_rows = []
                 next_order = fresh_df["Order"].max() + 1 if len(fresh_df) > 0 else 0
                 for t, o, p, pr, r, d, gr, notes in tasks:
@@ -609,9 +636,9 @@ if st.session_state.section == "Projects":
                         "Order": next_order
                     })
                     next_order += 1
-                
+
                 fresh_df = pd.concat([fresh_df, pd.DataFrame(new_rows)], ignore_index=True)
-                
+
                 if save_to_gsheet(fresh_df, "Projects"):
                     st.session_state.add_project = False
                     st.session_state.task_boxes = 1
@@ -635,7 +662,7 @@ if st.session_state.section == "Projects":
             if st.button("✅ Yes, delete project", key=f"confirm_del_proj_{project}", type="primary"):
                 fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
                 fresh_df = fresh_df[fresh_df["Project"] != project].reset_index(drop=True)
-                
+
                 if save_to_gsheet(fresh_df, "Projects"):
                     st.success(f"✅ Project '{project}' deleted")
                     st.session_state.confirm_delete_project = None
@@ -654,10 +681,10 @@ if st.session_state.section == "Projects":
     if st.session_state.confirm_delete_task is not None:
         task_id = st.session_state.confirm_delete_task
         project_name, task_name = task_id
-        
+
         fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
         mask = (fresh_df["Project"] == project_name) & (fresh_df["Task"] == task_name)
-        
+
         if mask.any():
             st.warning(f"⚠️ Are you sure you want to delete the task **{task_name}**? This cannot be undone!")
             col1, col2 = st.columns(2)
@@ -682,12 +709,12 @@ if st.session_state.section == "Projects":
         # Dividi progetti in In Progress e Completed
         in_progress_projects = {}
         completed_projects = {}
-        
+
         for project in df["Project"].unique():
             proj_df = df[df["Project"] == project]
             area = proj_df["Area"].iloc[0]
             completion = proj_df["Progress"].map(progress_score).mean()
-            
+
             if completion == 1.0:
                 if area not in completed_projects:
                     completed_projects[area] = []
@@ -696,26 +723,26 @@ if st.session_state.section == "Projects":
                 if area not in in_progress_projects:
                     in_progress_projects[area] = []
                 in_progress_projects[area].append(project)
-        
+
         # Ordina le aree alfabeticamente
         in_progress_areas = sorted(in_progress_projects.keys())
         completed_areas = sorted(completed_projects.keys())
-        
+
         # ======================================================
         # IN PROGRESS SECTION
         # ======================================================
         if in_progress_areas:
             st.markdown("### 📂 In Progress")
-            
+
             for area in in_progress_areas:
                 st.markdown(f"#### 📍 {area}")
-                
+
                 for project in sorted(in_progress_projects[area]):
                     proj_df = df[df["Project"] == project]
                     completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
-                    
+
                     header_text = f"📁 {project} — {completion}%"
-                    
+
                     if st.session_state.delete_mode:
                         cols = st.columns([8, 1])
                         with cols[0]:
@@ -726,30 +753,34 @@ if st.session_state.section == "Projects":
                                 st.rerun()
                     else:
                         expand = st.expander(header_text, expanded=False)
-                    
+
                     with expand:
                         st.progress(completion / 100)
-                        
+
                         for idx, r in proj_df.iterrows():
                             cols = st.columns([10, 1])
                             with cols[0]:
                                 if st.session_state.edit_mode:
                                     # EDIT MODE - Mostra campi editabili
                                     st.markdown(f"**Edit Task: {r['Task']}**")
-                                    
+
                                     new_task = st.text_input("Task Name", value=r['Task'], key=f"edit_task_{idx}")
                                     new_owner = st.text_input("Owner", value=r['Owner'], key=f"edit_owner_{idx}")
-                                    
+
                                     col_a, col_b = st.columns(2)
                                     with col_a:
-                                        new_priority = st.selectbox("Priority", ["Low", "Important", "Urgent"], 
-                                                                   index=["Low", "Important", "Urgent"].index(r['Priority']) if r['Priority'] in ["Low", "Important", "Urgent"] else 0,
-                                                                   key=f"edit_priority_{idx}")
+                                        new_priority = st.selectbox(
+                                            "Priority", ["Low", "Important", "Urgent"],
+                                            index=["Low", "Important", "Urgent"].index(r['Priority']) if r['Priority'] in ["Low", "Important", "Urgent"] else 0,
+                                            key=f"edit_priority_{idx}"
+                                        )
                                     with col_b:
-                                        new_progress = st.selectbox("Status", progress_values, 
-                                                                   index=progress_values.index(r['Progress']) if r['Progress'] in progress_values else 0,
-                                                                   key=f"edit_progress_{idx}")
-                                    
+                                        new_progress = st.selectbox(
+                                            "Status", progress_values,
+                                            index=progress_values.index(r['Progress']) if r['Progress'] in progress_values else 0,
+                                            key=f"edit_progress_{idx}"
+                                        )
+
                                     col_c, col_d = st.columns(2)
                                     with col_c:
                                         current_release = r['Release Date'].date() if pd.notna(r['Release Date']) else None
@@ -757,7 +788,7 @@ if st.session_state.section == "Projects":
                                     with col_d:
                                         current_due = r['Due Date'].date() if pd.notna(r['Due Date']) else None
                                         new_due = st.date_input("Due Date", value=current_due, key=f"edit_due_{idx}")
-                                    
+
                                     gr_text = r.get('GR/Mail Object', '')
                                     if '\n' in gr_text:
                                         parts = gr_text.split('\n', 1)
@@ -766,15 +797,15 @@ if st.session_state.section == "Projects":
                                     else:
                                         current_gr = gr_text
                                         current_mail = ''
-                                    
+
                                     col_gr, col_mail = st.columns(2)
                                     with col_gr:
                                         new_gr = st.text_area("📋 GR Number", value=current_gr, key=f"edit_gr_{idx}", height=80)
                                     with col_mail:
                                         new_mail = st.text_area("📧 Mail Object", value=current_mail, key=f"edit_mail_{idx}", height=80)
-                                    
+
                                     new_notes = st.text_area("📝 Notes", value=r.get('Notes', ''), key=f"edit_notes_{idx}", height=80)
-                                    
+
                                     if st.button("💾 Save Changes", key=f"save_edit_{idx}", type="primary"):
                                         fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
                                         fresh_df.loc[idx, "Task"] = new_task
@@ -786,33 +817,33 @@ if st.session_state.section == "Projects":
                                         fresh_df.loc[idx, "GR/Mail Object"] = f"{new_gr}\n{new_mail}" if new_gr or new_mail else ""
                                         fresh_df.loc[idx, "Notes"] = new_notes
                                         fresh_df.loc[idx, "Last Update"] = pd.Timestamp.now()
-                                        
+
                                         if save_to_gsheet(fresh_df, "Projects"):
                                             st.success("✅ Changes saved!")
                                             time.sleep(1)
                                             st.rerun()
-                                
+
                                 else:
                                     # VIEW MODE - Mostra dati come prima
                                     st.markdown(f"**{r['Task']}**")
                                     st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
-                                    
+
                                     release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
                                     due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
                                     st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
-                                    
+
                                     gr_text = r.get('GR/Mail Object', '')
                                     if gr_text:
                                         parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
-                                        
+
                                         if parts[0].strip():
                                             with st.expander("📋 GR Number"):
                                                 st.text(parts[0].strip())
-                                        
+
                                         if len(parts) > 1 and parts[1].strip():
                                             with st.expander("📧 Mail Object"):
                                                 st.text(parts[1].strip())
-                                    
+
                                     current_notes = r.get('Notes', '')
                                     if pd.isna(current_notes):
                                         current_notes = ''
@@ -823,7 +854,7 @@ if st.session_state.section == "Projects":
                                         height=80,
                                         placeholder="Add your notes here..."
                                     )
-                                    
+
                                     # OTTIMIZZATO: Salva notes senza rerun
                                     if notes != current_notes:
                                         df.loc[idx, "Notes"] = notes
@@ -839,7 +870,7 @@ if st.session_state.section == "Projects":
                                         key=f"status_radio_{project}_{r['Task']}_{idx}",
                                         horizontal=True
                                     )
-                                    
+
                                     if status != current_status:
                                         fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
                                         fresh_df.loc[idx, "Progress"] = status
@@ -852,27 +883,27 @@ if st.session_state.section == "Projects":
                                 if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
                                     st.session_state.confirm_delete_task = (project, r['Task'])
                                     st.rerun()
-                            
+
                             st.divider()
-                
+
                 st.divider()
-        
+
         # ======================================================
         # COMPLETED SECTION
         # ======================================================
         if completed_areas:
             st.markdown("### ✅ Completed")
-            
+
             for area in completed_areas:
                 st.markdown(f"#### 📍 {area}")
-                
+
                 for project in sorted(completed_projects[area]):
                     proj_df = df[df["Project"] == project]
                     completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
-                    
+
                     header_text = f"📁 {project} — {completion}%"
                     expand = st.expander(header_text, expanded=False)
-                    
+
                     with expand:
                         st.progress(completion / 100)
                         for idx, r in proj_df.iterrows():
@@ -880,7 +911,7 @@ if st.session_state.section == "Projects":
                             st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
                             st.write(f"✅ Status: {r['Progress']}")
                             st.divider()
-                
+
                 st.divider()
 
     elif not st.session_state.add_project and len(df) == 0:
@@ -898,7 +929,7 @@ if st.session_state.section == "Projects":
 if st.session_state.section == "EOM":
 
     st.subheader("📅 End of Month Activities")
-    
+
     if len(eom_df) > 0 and "Last Update" in eom_df.columns:
         try:
             last_update_eom = pd.to_datetime(eom_df["Last Update"]).max()
@@ -920,13 +951,12 @@ if st.session_state.section == "EOM":
 
     for c in month_cols:
         if c not in eom_df.columns:
-            eom_df[c] = "⚪"
+            eom_df[c] = EOM_WHITE  # ✅ default white
 
     eom_df = clean_eom_dataframe(eom_df, month_cols)
 
     # ======================================================
     # ✅ FIX: EOM FILTERS + SAFE VIEW/EDIT DATAFRAMES
-    # (non cambia nulla del resto: aggiunge solo ciò che mancava)
     # ======================================================
     eom_full_df = eom_df.copy()   # SEMPRE completo -> è quello che si salva
     eom_view_df = eom_df.copy()   # quello che si mostra (eventualmente filtrato)
@@ -935,17 +965,17 @@ if st.session_state.section == "EOM":
     with col1:
         st.caption(f"🎯 **Current working month**: {current_month_col}")
     with col2:
-        if st.button("🔍 Filters" if not st.session_state.show_eom_filters else "🔍 Hide", 
+        if st.button("🔍 Filters" if not st.session_state.show_eom_filters else "🔍 Hide",
                      use_container_width=True):
             st.session_state.show_eom_filters = not st.session_state.show_eom_filters
             st.rerun()
     with col3:
-        if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
+        if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View",
                      use_container_width=True):
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
     with col4:
-        if st.button("🗑️ Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel", 
+        if st.button("🗑️ Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel",
                      use_container_width=True):
             st.session_state.eom_bulk_delete = not st.session_state.eom_bulk_delete
             st.rerun()
@@ -953,7 +983,7 @@ if st.session_state.section == "EOM":
     st.divider()
 
     # ======================================================
-    # ✅ EOM FILTERS (prima mancava completamente la UI/logic)
+    # ✅ EOM FILTERS
     # ======================================================
     if st.session_state.show_eom_filters and len(eom_full_df) > 0:
         with st.expander("🔍 Filters (EOM)", expanded=True):
@@ -987,7 +1017,8 @@ if st.session_state.section == "EOM":
                 )
 
             with f4:
-                status_vals = ["All", "⚪", "🟢", "🔴"]
+                # ✅ include gray in filter options
+                status_vals = ["All"] + EOM_STATUS_OPTIONS
                 eom_selected_status = st.selectbox(
                     f"Status ({current_month_col})",
                     status_vals,
@@ -1037,7 +1068,7 @@ if st.session_state.section == "EOM":
     # ======================================================
     if st.session_state.eom_bulk_delete and len(eom_df) > 0:
         st.warning("🗑️ **Delete Mode**: Select activities to delete")
-        
+
         selected_to_delete = []
         for idx, row in eom_df.iterrows():
             col1, col2 = st.columns([1, 10])
@@ -1046,21 +1077,21 @@ if st.session_state.section == "EOM":
                     selected_to_delete.append(idx)
             with col2:
                 st.write(f"**{row['Activity']}** ({row['Area']} - {row['ID Macro']}/{row['ID Micro']})")
-        
+
         st.divider()
-        
+
         if selected_to_delete:
             col1, col2 = st.columns([1, 4])
             with col1:
                 if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
                     fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-                    
+
                     # Elimina le righe selezionate
                     fresh_eom = fresh_eom.drop(selected_to_delete).reset_index(drop=True)
-                    
+
                     # Rinumera automaticamente gli ID
                     fresh_eom = renumber_eom_ids(fresh_eom)
-                    
+
                     if save_to_gsheet(fresh_eom, "EOM"):
                         st.success(f"✅ {len(selected_to_delete)} activities deleted and IDs renumbered!")
                         st.session_state.eom_bulk_delete = False
@@ -1068,7 +1099,7 @@ if st.session_state.section == "EOM":
                         st.rerun()
         else:
             st.info("👆 Select activities above to delete them")
-        
+
         st.divider()
 
     with st.expander("➕ Add new End-of-Month Activity", expanded=False):
@@ -1087,7 +1118,7 @@ if st.session_state.section == "EOM":
                 st.error("❌ Activity name is required!")
             else:
                 fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-                
+
                 next_order = fresh_eom["Order"].max() + 1 if len(fresh_eom) > 0 else 0
                 row = {
                     "Area": area,
@@ -1101,20 +1132,20 @@ if st.session_state.section == "EOM":
                     "Order": next_order
                 }
                 for c in month_cols:
-                    row[c] = "⚪"
+                    row[c] = EOM_WHITE  # ✅ default white
 
                 fresh_eom = pd.concat([fresh_eom, pd.DataFrame([row])], ignore_index=True)
-                
+
                 # Rinumera automaticamente dopo l'aggiunta
                 fresh_eom = renumber_eom_ids(fresh_eom)
-                
+
                 if save_to_gsheet(fresh_eom, "EOM"):
                     st.success(f"✅ Activity '{activity}' added!")
                     time.sleep(1)
                     st.rerun()
 
     # ======================================================
-    # ✅ FIX: EOM EDIT MODE (prima non esisteva alcuna UI)
+    # ✅ EOM EDIT MODE
     # ======================================================
     if st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
@@ -1128,8 +1159,8 @@ if st.session_state.section == "EOM":
         for c in visible_cols:
             col_cfg[c] = st.column_config.SelectboxColumn(
                 c,
-                options=["⚪", "🟢", "🔴"],
-                default="⚪",
+                options=EOM_STATUS_OPTIONS,  # ✅ 4 dots
+                default=EOM_WHITE,
                 width="small"
             )
 
@@ -1149,7 +1180,7 @@ if st.session_state.section == "EOM":
             # assicurati di avere anche le colonne mesi nel fresh_full
             for c in month_cols:
                 if c not in fresh_full.columns:
-                    fresh_full[c] = "⚪"
+                    fresh_full[c] = EOM_WHITE
 
             # pulizia tipi e garantisci Order
             if "Order" not in fresh_full.columns:
@@ -1175,25 +1206,25 @@ if st.session_state.section == "EOM":
         st.divider()
 
     # ======================================================
-    # VIEW MODE (come prima) + ✅ FIX: usa eom_view_df ma salva senza perdere righe
+    # VIEW MODE + ✅ SAFE SAVE
     # ======================================================
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
-        
+
         visible_cols = [col for col in month_cols if col not in st.session_state.hidden_months]
-        
+
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols
         display_df = eom_view_df[display_cols].copy()
-        
+
         column_config = {}
-        
+
         for i, col in enumerate(visible_cols):
             is_current = (col == current_month_col)
             column_config[col] = st.column_config.SelectboxColumn(
                 col,
                 help="🎯 **Current working month**" if is_current else "Future month",
-                options=["⚪", "🟢", "🔴"],
-                default="⚪",
+                options=EOM_STATUS_OPTIONS,  # ✅ 4 dots
+                default=EOM_WHITE,
                 width="small"
             )
 
@@ -1219,7 +1250,7 @@ if st.session_state.section == "EOM":
             fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
             for c in month_cols:
                 if c not in fresh_full.columns:
-                    fresh_full[c] = "⚪"
+                    fresh_full[c] = EOM_WHITE
 
             if "Order" not in fresh_full.columns:
                 fresh_full["Order"] = range(len(fresh_full))
@@ -1240,14 +1271,24 @@ if st.session_state.section == "EOM":
             save_to_gsheet(fresh_full, "EOM")
 
         st.divider()
-        
+
+        # ======================================================
+        # ✅ NEW: metrics exclude GRAY from denominator
+        # ======================================================
         total_activities = len(eom_df)
-        completed_current = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
-        progress_pct = int((completed_current / total_activities * 100)) if total_activities > 0 else 0
-        
+        if current_month_col in eom_df.columns:
+            todo_mask = eom_df[current_month_col] != EOM_GRAY
+            total_todo = int(todo_mask.sum())
+            completed_current = int(((eom_df[current_month_col] == EOM_GREEN) & todo_mask).sum())
+        else:
+            total_todo = total_activities
+            completed_current = 0
+
+        progress_pct = int((completed_current / total_todo * 100)) if total_todo > 0 else 0
+
         st.metric(
             label="Current Month Progress",
-            value=f"{completed_current}/{total_activities}",
+            value=f"{completed_current}/{total_todo}",
             delta=f"{progress_pct}%"
         )
 
@@ -1256,6 +1297,12 @@ if st.session_state.section == "EOM":
 
     st.divider()
     if len(eom_df) > 0:
-        total_activities = len(eom_df)
-        completed_current_month = (eom_df[current_month_col] == "🟢").sum() if current_month_col in eom_df.columns else 0
-        st.caption(f"📊 Total activities: {total_activities} | Current month completed: {completed_current_month}/{total_activities}")
+        if current_month_col in eom_df.columns:
+            todo_mask = eom_df[current_month_col] != EOM_GRAY
+            total_todo = int(todo_mask.sum())
+            completed_current_month = int(((eom_df[current_month_col] == EOM_GREEN) & todo_mask).sum())
+        else:
+            total_todo = len(eom_df)
+            completed_current_month = 0
+
+        st.caption(f"📊 Total activities: {len(eom_df)} | Current month completed: {completed_current_month}/{total_todo}")
