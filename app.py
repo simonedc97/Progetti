@@ -602,129 +602,152 @@ if st.session_state.section == "Projects":
             st.stop()
 
     # ======================================================
-    # 📁 PROJECT VIEW
+    # 📁 PROJECT VIEW - ORGANIZZATO PER STATUS E AREA
     # ======================================================
     if not st.session_state.add_project and len(df) > 0:
-        in_progress_projects = []
-        completed_projects = []
+        # Dividi progetti in In Progress e Completed
+        in_progress_projects = {}
+        completed_projects = {}
         
         for project in df["Project"].unique():
             proj_df = df[df["Project"] == project]
+            area = proj_df["Area"].iloc[0]
             completion = proj_df["Progress"].map(progress_score).mean()
             
             if completion == 1.0:
-                completed_projects.append(project)
+                if area not in completed_projects:
+                    completed_projects[area] = []
+                completed_projects[area].append(project)
             else:
-                in_progress_projects.append(project)
+                if area not in in_progress_projects:
+                    in_progress_projects[area] = []
+                in_progress_projects[area].append(project)
         
-        in_progress_projects.sort()
-        completed_projects.sort()
+        # Ordina le aree alfabeticamente
+        in_progress_areas = sorted(in_progress_projects.keys())
+        completed_areas = sorted(completed_projects.keys())
         
-        if in_progress_projects:
+        # ======================================================
+        # IN PROGRESS SECTION
+        # ======================================================
+        if in_progress_areas:
             st.markdown("### 📂 In Progress")
             
-            for project in in_progress_projects:
-                proj_df = df[df["Project"] == project]
-                area = proj_df["Area"].iloc[0]
-                completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
+            for area in in_progress_areas:
+                st.markdown(f"#### 📍 {area}")
                 
-                header_text = f"📁 {project} — {completion}%"
-                
-                if st.session_state.delete_mode:
-                    cols = st.columns([8, 1])
-                    with cols[0]:
-                        expand = st.expander(header_text, expanded=False)
-                    with cols[1]:
-                        if st.button("🗑️", key=f"delete_proj_{project}"):
-                            st.session_state.confirm_delete_project = project
-                            st.rerun()
-                else:
-                    expand = st.expander(header_text, expanded=False)
-                
-                with expand:
-                    st.progress(completion / 100)
+                for project in sorted(in_progress_projects[area]):
+                    proj_df = df[df["Project"] == project]
+                    completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
                     
-                    if not st.session_state.edit_mode:
-                        for idx, r in proj_df.iterrows():
-                            cols = st.columns([10, 1])
-                            with cols[0]:
-                                st.markdown(f"**{r['Task']}**")
-                                st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
-                                
-                                release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
-                                due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
-                                st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
-                                
-                                gr_text = r.get('GR/Mail Object', '')
-                                if gr_text:
-                                    parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
+                    header_text = f"📁 {project} — {completion}%"
+                    
+                    if st.session_state.delete_mode:
+                        cols = st.columns([8, 1])
+                        with cols[0]:
+                            expand = st.expander(header_text, expanded=False)
+                        with cols[1]:
+                            if st.button("🗑️", key=f"delete_proj_{project}"):
+                                st.session_state.confirm_delete_project = project
+                                st.rerun()
+                    else:
+                        expand = st.expander(header_text, expanded=False)
+                    
+                    with expand:
+                        st.progress(completion / 100)
+                        
+                        if not st.session_state.edit_mode:
+                            for idx, r in proj_df.iterrows():
+                                cols = st.columns([10, 1])
+                                with cols[0]:
+                                    st.markdown(f"**{r['Task']}**")
+                                    st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
                                     
-                                    if parts[0].strip():
-                                        with st.expander("📋 GR Number"):
-                                            st.text(parts[0].strip())
+                                    release_str = r['Release Date'].strftime('%d/%m/%Y') if pd.notna(r['Release Date']) else '—'
+                                    due_str = r['Due Date'].strftime('%d/%m/%Y') if pd.notna(r['Due Date']) else '—'
+                                    st.write(f"🎯 Priority: {r['Priority']} | 📅 Release: {release_str} | Due: {due_str}")
                                     
-                                    if len(parts) > 1 and parts[1].strip():
-                                        with st.expander("📧 Mail Object"):
-                                            st.text(parts[1].strip())
-                                
-                                current_notes = r.get('Notes', '')
-                                if pd.isna(current_notes):
-                                    current_notes = ''
-                                notes = st.text_area(
-                                    "📝 Notes",
-                                    value=current_notes,
-                                    key=f"notes_{project}_{r['Task']}_{idx}",
-                                    height=80,
-                                    placeholder="Add your notes here..."
-                                )
-                                
-                                # OTTIMIZZATO: Salva notes senza rerun
-                                if notes != current_notes:
-                                    df.loc[idx, "Notes"] = notes
-                                    df.loc[idx, "Last Update"] = pd.Timestamp.now()
-                                    save_to_gsheet(df, "Projects")
-                                    st.success("💾 Notes saved", icon="✅")
+                                    gr_text = r.get('GR/Mail Object', '')
+                                    if gr_text:
+                                        parts = gr_text.split('\n', 1) if '\n' in gr_text else [gr_text, '']
+                                        
+                                        if parts[0].strip():
+                                            with st.expander("📋 GR Number"):
+                                                st.text(parts[0].strip())
+                                        
+                                        if len(parts) > 1 and parts[1].strip():
+                                            with st.expander("📧 Mail Object"):
+                                                st.text(parts[1].strip())
+                                    
+                                    current_notes = r.get('Notes', '')
+                                    if pd.isna(current_notes):
+                                        current_notes = ''
+                                    notes = st.text_area(
+                                        "📝 Notes",
+                                        value=current_notes,
+                                        key=f"notes_{project}_{r['Task']}_{idx}",
+                                        height=80,
+                                        placeholder="Add your notes here..."
+                                    )
+                                    
+                                    # OTTIMIZZATO: Salva notes senza rerun
+                                    if notes != current_notes:
+                                        df.loc[idx, "Notes"] = notes
+                                        df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                        save_to_gsheet(df, "Projects")
+                                        st.success("💾 Notes saved", icon="✅")
 
-                                current_status = r["Progress"]
-                                status = st.radio(
-                                    "Status",
-                                    options=progress_values,
-                                    index=progress_values.index(current_status),
-                                    key=f"status_radio_{project}_{r['Task']}_{idx}",
-                                    horizontal=True
-                                )
-                                
-                                if status != current_status:
-                                    fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
-                                    fresh_df.loc[idx, "Progress"] = status
-                                    fresh_df.loc[idx, "Last Update"] = pd.Timestamp.now()
-                                    if save_to_gsheet(fresh_df, "Projects"):
-                                        time.sleep(0.5)
+                                    current_status = r["Progress"]
+                                    status = st.radio(
+                                        "Status",
+                                        options=progress_values,
+                                        index=progress_values.index(current_status),
+                                        key=f"status_radio_{project}_{r['Task']}_{idx}",
+                                        horizontal=True
+                                    )
+                                    
+                                    if status != current_status:
+                                        fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
+                                        fresh_df.loc[idx, "Progress"] = status
+                                        fresh_df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                        if save_to_gsheet(fresh_df, "Projects"):
+                                            time.sleep(0.5)
+                                            st.rerun()
+
+                                with cols[1]:
+                                    if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
+                                        st.session_state.confirm_delete_task = (project, r['Task'])
                                         st.rerun()
-
-                            with cols[1]:
-                                if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
-                                    st.session_state.confirm_delete_task = (project, r['Task'])
-                                    st.rerun()
-                            
-                            st.divider()
+                                
+                                st.divider()
+                
+                st.divider()
         
-        if completed_projects:
+        # ======================================================
+        # COMPLETED SECTION
+        # ======================================================
+        if completed_areas:
             st.markdown("### ✅ Completed")
-            for project in completed_projects:
-                proj_df = df[df["Project"] == project]
-                completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
+            
+            for area in completed_areas:
+                st.markdown(f"#### 📍 {area}")
                 
-                header_text = f"📁 {project} — {completion}%"
-                expand = st.expander(header_text, expanded=False)
+                for project in sorted(completed_projects[area]):
+                    proj_df = df[df["Project"] == project]
+                    completion = int(proj_df["Progress"].map(progress_score).mean() * 100)
+                    
+                    header_text = f"📁 {project} — {completion}%"
+                    expand = st.expander(header_text, expanded=False)
+                    
+                    with expand:
+                        st.progress(completion / 100)
+                        for idx, r in proj_df.iterrows():
+                            st.markdown(f"**{r['Task']}**")
+                            st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
+                            st.write(f"✅ Status: {r['Progress']}")
+                            st.divider()
                 
-                with expand:
-                    st.progress(completion / 100)
-                    for idx, r in proj_df.iterrows():
-                        st.markdown(f"**{r['Task']}**")
-                        st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
-                        st.write(f"✅ Status: {r['Progress']}")
-                        st.divider()
+                st.divider()
 
     elif not st.session_state.add_project and len(df) == 0:
         st.info("📝 No projects yet. Click '➕ Project' to create your first project!")
