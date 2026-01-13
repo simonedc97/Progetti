@@ -336,7 +336,7 @@ def clean_eom_dataframe(df, month_cols):
     for col in month_cols:
         if col in df.columns:
             df[col] = df[col].fillna("⚪")
-            df[col] = df[col].replace("", "🔘")
+            df[col] = df[col].replace("", "⚪")
             df[col] = df[col].apply(lambda x: 
                 "🟢" if str(x) in ["True", "true", "Done", "🟢", "1"] 
                 else "🔴" if str(x) in ["False", "false", "Undone", "🔴", "0"]
