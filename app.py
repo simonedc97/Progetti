@@ -262,6 +262,8 @@ if "eom_last_saved_state" not in st.session_state:
     st.session_state.eom_last_saved_state = None
 if "show_old_months" not in st.session_state:
     st.session_state.show_old_months = False
+if "selected_old_months" not in st.session_state:
+    st.session_state.selected_old_months = []
 
 # =========================
 # HELPERS
@@ -1077,7 +1079,7 @@ if st.session_state.section == "EOM":
                     key=f"eom_filter_status_{st.session_state.reset_eom_filters_flag}"
                 )
 
-            s1, s2, s3 = st.columns([2, 1, 1])
+            s1, s2, s3 = st.columns([2, 2, 1])
             with s1:
                 eom_search = st.text_input(
                     "Search in Activity / Files",
@@ -1085,19 +1087,25 @@ if st.session_state.section == "EOM":
                     key=f"eom_filter_search_{st.session_state.reset_eom_filters_flag}"
                 )
             with s2:
-                # ✅ NUOVO: Toggle per mostrare mesi vecchi
-                show_old = st.checkbox(
-                    "📅 Show old months",
-                    value=st.session_state.show_old_months,
-                    key=f"show_old_months_{st.session_state.reset_eom_filters_flag}"
-                )
-                if show_old != st.session_state.show_old_months:
-                    st.session_state.show_old_months = show_old
-                    st.rerun()
+                # ✅ NUOVO: Multiselect per scegliere mesi vecchi da mostrare
+                if len(old_month_cols) > 0:
+                    selected_old = st.multiselect(
+                        "📅 Show old months",
+                        options=old_month_cols,
+                        default=st.session_state.selected_old_months,
+                        key=f"old_months_select_{st.session_state.reset_eom_filters_flag}",
+                        help="Select which old months to display"
+                    )
+                    if selected_old != st.session_state.selected_old_months:
+                        st.session_state.selected_old_months = selected_old
+                        st.rerun()
+                else:
+                    st.caption("No old months available")
             with s3:
                 if st.button("🔄 Reset Filters", use_container_width=True):
                     st.session_state.reset_eom_filters_flag += 1
                     st.session_state.show_old_months = False
+                    st.session_state.selected_old_months = []
                     st.rerun()
 
         # Apply filters
@@ -1213,12 +1221,14 @@ if st.session_state.section == "EOM":
     if st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
 
-        # ✅ Mostra mesi visibili o tutti se richiesto
-        if st.session_state.show_old_months:
-            display_month_cols = all_month_cols
-            st.info(f"📅 Showing all months including old ones ({len(old_month_cols)} hidden by default)")
-        else:
-            display_month_cols = visible_month_cols
+        # ✅ Mostra mesi visibili + mesi vecchi selezionati
+        display_month_cols = visible_month_cols.copy()
+        if st.session_state.selected_old_months:
+            # Aggiungi i mesi vecchi selezionati PRIMA dei mesi visibili (in ordine cronologico)
+            selected_sorted = sorted(st.session_state.selected_old_months, 
+                                    key=lambda x: all_month_cols.index(x))
+            display_month_cols = selected_sorted + display_month_cols
+            st.info(f"📅 Showing {len(selected_sorted)} old month(s) + {len(visible_month_cols)} current months")
 
         edit_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols + ["Order"]
 
@@ -1227,9 +1237,10 @@ if st.session_state.section == "EOM":
         col_cfg = {}
         for c in display_month_cols:
             is_current = (c == current_month_col)
+            is_old = c in old_month_cols
             col_cfg[c] = st.column_config.SelectboxColumn(
                 c,
-                help="🎯 **Current working month**" if is_current else ("📦 Old month" if c in old_month_cols else "Future month"),
+                help="🎯 **Current working month**" if is_current else ("📦 Old month" if is_old else "Future month"),
                 options=EOM_STATUS_OPTIONS,  # ✅ 4 dots
                 default=EOM_WHITE,
                 width="small"
@@ -1295,12 +1306,14 @@ if st.session_state.section == "EOM":
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
 
-        # ✅ Mostra mesi visibili o tutti se richiesto
-        if st.session_state.show_old_months:
-            display_month_cols = all_month_cols
-            st.info(f"📅 Showing all months including old ones ({len(old_month_cols)} hidden by default)")
-        else:
-            display_month_cols = visible_month_cols
+        # ✅ Mostra mesi visibili + mesi vecchi selezionati
+        display_month_cols = visible_month_cols.copy()
+        if st.session_state.selected_old_months:
+            # Aggiungi i mesi vecchi selezionati PRIMA dei mesi visibili (in ordine cronologico)
+            selected_sorted = sorted(st.session_state.selected_old_months, 
+                                    key=lambda x: all_month_cols.index(x))
+            display_month_cols = selected_sorted + display_month_cols
+            st.info(f"📅 Showing {len(selected_sorted)} old month(s) + {len(visible_month_cols)} current months")
 
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols
         display_df = eom_view_df[display_cols].copy()
