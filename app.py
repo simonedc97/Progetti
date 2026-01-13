@@ -7,6 +7,7 @@ from googleapiclient.discovery import build
 import json
 import time
 import socket
+import re
 
 # =========================
 # CONFIG
@@ -254,6 +255,79 @@ if "show_month_manager" not in st.session_state:
 # =========================
 progress_values = ["Not started", "In progress", "Completed"]
 progress_score = {"Not started": 0, "In progress": 0.5, "Completed": 1}
+
+def parse_id(id_str):
+    """Estrae macro e micro ID da una stringa come '1.2' o '1'"""
+    if not id_str or pd.isna(id_str):
+        return None, None
+    
+    id_str = str(id_str).strip()
+    if '.' in id_str:
+        parts = id_str.split('.')
+        try:
+            macro = int(parts[0])
+            micro = int(parts[1]) if len(parts) > 1 else None
+            return macro, micro
+        except:
+            return None, None
+    else:
+        try:
+            return int(id_str), None
+        except:
+            return None, None
+
+def renumber_eom_ids(df):
+    """Rinumera automaticamente gli ID Macro e Micro del DataFrame EOM"""
+    if len(df) == 0:
+        return df
+    
+    df = df.copy()
+    
+    # Parsing degli ID esistenti
+    df['parsed_macro'] = df['ID Macro'].apply(lambda x: parse_id(x)[0])
+    df['parsed_micro'] = df['ID Micro'].apply(lambda x: parse_id(x)[1])
+    
+    # Ordina per macro e micro ID
+    df = df.sort_values(['parsed_macro', 'parsed_micro'], na_position='last').reset_index(drop=True)
+    
+    # Rinumerazione
+    new_macro_counter = 1
+    macro_mapping = {}
+    
+    for idx, row in df.iterrows():
+        old_macro = row['parsed_macro']
+        
+        if pd.isna(old_macro):
+            continue
+        
+        # Se questo macro ID non è ancora stato mappato
+        if old_macro not in macro_mapping:
+            macro_mapping[old_macro] = new_macro_counter
+            new_macro_counter += 1
+        
+        new_macro = macro_mapping[old_macro]
+        
+        # Aggiorna ID Macro
+        df.loc[idx, 'ID Macro'] = str(new_macro)
+    
+    # Rinumerazione Micro ID per ciascun gruppo Macro
+    for macro_id in df['ID Macro'].unique():
+        if not macro_id or pd.isna(macro_id):
+            continue
+        
+        mask = df['ID Macro'] == macro_id
+        micro_rows = df[mask & df['parsed_micro'].notna()]
+        
+        if len(micro_rows) > 0:
+            new_micro_counter = 1
+            for idx in micro_rows.index:
+                df.loc[idx, 'ID Micro'] = f"{macro_id}.{new_micro_counter}"
+                new_micro_counter += 1
+    
+    # Rimuovi colonne temporanee
+    df = df.drop(['parsed_macro', 'parsed_micro'], axis=1)
+    
+    return df
 
 def clean_eom_dataframe(df, month_cols):
     """Pulisce il DataFrame EOM assicurando i tipi corretti"""
@@ -872,7 +946,7 @@ if st.session_state.section == "EOM":
     st.divider()
 
     # ======================================================
-    # BULK DELETE MODE
+    # BULK DELETE MODE CON RINUMERAZIONE AUTOMATICA
     # ======================================================
     if st.session_state.eom_bulk_delete and len(eom_df) > 0:
         st.warning("🗑️ **Delete Mode**: Select activities to delete")
@@ -893,10 +967,15 @@ if st.session_state.section == "EOM":
             with col1:
                 if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
                     fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+                    
+                    # Elimina le righe selezionate
                     fresh_eom = fresh_eom.drop(selected_to_delete).reset_index(drop=True)
                     
+                    # Rinumera automaticamente gli ID
+                    fresh_eom = renumber_eom_ids(fresh_eom)
+                    
                     if save_to_gsheet(fresh_eom, "EOM"):
-                        st.success(f"✅ {len(selected_to_delete)} activities deleted!")
+                        st.success(f"✅ {len(selected_to_delete)} activities deleted and IDs renumbered!")
                         st.session_state.eom_bulk_delete = False
                         time.sleep(1)
                         st.rerun()
@@ -908,8 +987,8 @@ if st.session_state.section == "EOM":
     with st.expander("➕ Add new End-of-Month Activity", expanded=False):
         c1, c2, c3 = st.columns(3)
         area = c1.text_input("Area", key="eom_area")
-        id_macro = c2.text_input("ID Macro", key="eom_macro")
-        id_micro = c3.text_input("ID Micro", key="eom_micro")
+        id_macro = c2.text_input("ID Macro (e.g., 1, 2, 3)", key="eom_macro")
+        id_micro = c3.text_input("ID Micro (e.g., 1.1, 1.2, 2.1)", key="eom_micro")
 
         activity = st.text_input("Activity", key="eom_activity")
         c4, c5 = st.columns(2)
@@ -938,6 +1017,10 @@ if st.session_state.section == "EOM":
                     row[c] = "⚪"
 
                 fresh_eom = pd.concat([fresh_eom, pd.DataFrame([row])], ignore_index=True)
+                
+                # Rinumera automaticamente dopo l'aggiunta
+                fresh_eom = renumber_eom_ids(fresh_eom)
+                
                 if save_to_gsheet(fresh_eom, "EOM"):
                     st.success(f"✅ Activity '{activity}' added!")
                     time.sleep(1)
