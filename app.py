@@ -258,6 +258,8 @@ if "hidden_months" not in st.session_state:
     st.session_state.hidden_months = []
 if "show_month_manager" not in st.session_state:
     st.session_state.show_month_manager = False
+if "eom_last_saved_state" not in st.session_state:
+    st.session_state.eom_last_saved_state = None
 
 # =========================
 # HELPERS
@@ -390,31 +392,38 @@ def last_working_day(year, month):
     return last_day
 
 def get_next_months(n=6, include_previous=True):
-    """Genera i prossimi N mesi"""
+    """Genera i mesi da visualizzare: 4 precedenti + current + 1 successivo"""
     today = date.today()
     months = []
-
-    if include_previous:
-        prev_month = today.month - 1
-        prev_year = today.year
-        if prev_month < 1:
-            prev_month = 12
-            prev_year -= 1
-        months.append((prev_year, prev_month))
-
-    for i in range(n):
-        month = today.month + i
-        year = today.year
-        while month > 12:
-            month -= 12
-            year += 1
+    
+    # Il "current working month" è il mese precedente a quello attuale
+    # (es. a Gennaio 2025 lavoriamo su Dicembre 2024)
+    current_year = today.year
+    current_month = today.month - 1
+    if current_month < 1:
+        current_month = 12
+        current_year -= 1
+    
+    # Aggiungi 4 mesi precedenti al current working month
+    for i in range(4, 0, -1):
+        month = current_month - i
+        year = current_year
+        while month < 1:
+            month += 12
+            year -= 1
         months.append((year, month))
-
-    if (2025, 12) not in months:
-        months.append((2025, 12))
-
-    months = sorted(list(set(months)))
-
+    
+    # Aggiungi il current working month
+    months.append((current_year, current_month))
+    
+    # Aggiungi 1 mese successivo
+    month = current_month + 1
+    year = current_year
+    if month > 12:
+        month = 1
+        year += 1
+    months.append((year, month))
+    
     return months
 
 # =========================
@@ -937,10 +946,14 @@ if st.session_state.section == "EOM":
         except:
             st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
 
-    months = get_next_months(6, include_previous=True)
+    # ✅ NUOVA LOGICA MESI: 4 precedenti + current + 1 successivo
+    months = get_next_months()
     eom_dates = [last_working_day(y, m) for y, m in months]
     month_cols = [d.strftime("%d %B %Y") for d in eom_dates]
-    current_month_col = month_cols[0]
+    
+    # Il current working month è il 5° nella lista (indice 4)
+    # perché abbiamo: [mes-4, mes-3, mes-2, mes-1, CURRENT, mes+1]
+    current_month_col = month_cols[4]
 
     for col in EOM_BASE_COLUMNS:
         if col not in eom_df.columns:
@@ -1145,7 +1158,7 @@ if st.session_state.section == "EOM":
                     st.rerun()
 
     # ======================================================
-    # ✅ EOM EDIT MODE
+    # ✅ EOM EDIT MODE CON FIX SALVATAGGIO
     # ======================================================
     if st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
@@ -1174,20 +1187,28 @@ if st.session_state.section == "EOM":
             key="eom_edit_editor"
         )
 
-        # Salvataggio sicuro su FULL DF usando Order come chiave stabile
-        if not edited.equals(edit_df):
+        # ✅ FIX: Salvataggio più robusto - confronta con stato salvato invece che con edit_df
+        def df_to_comparable_dict(df):
+            """Converte DataFrame in dict comparabile per rilevare modifiche"""
+            return df.to_dict('records')
+
+        current_state = df_to_comparable_dict(edited)
+        
+        if st.session_state.eom_last_saved_state is None:
+            st.session_state.eom_last_saved_state = df_to_comparable_dict(edit_df)
+        
+        if current_state != st.session_state.eom_last_saved_state:
             fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-            # assicurati di avere anche le colonne mesi nel fresh_full
+            
             for c in month_cols:
                 if c not in fresh_full.columns:
                     fresh_full[c] = EOM_WHITE
 
-            # pulizia tipi e garantisci Order
             if "Order" not in fresh_full.columns:
                 fresh_full["Order"] = range(len(fresh_full))
             fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
 
-            # Applica modifiche riga per riga
+            # Applica modifiche riga per riga usando Order come chiave
             for _, r in edited.iterrows():
                 o = int(r["Order"])
                 mask = fresh_full["Order"] == o
@@ -1200,13 +1221,14 @@ if st.session_state.section == "EOM":
             fresh_full = renumber_eom_ids(fresh_full)
             fresh_full = clean_eom_dataframe(fresh_full, month_cols)
 
-            save_to_gsheet(fresh_full, "EOM")
-            st.success("✅ Changes saved!", icon="💾")
+            if save_to_gsheet(fresh_full, "EOM"):
+                st.session_state.eom_last_saved_state = current_state
+                st.success("✅ Changes saved!", icon="💾")
 
         st.divider()
 
     # ======================================================
-    # VIEW MODE + ✅ SAFE SAVE
+    # ✅ VIEW MODE CON FIX SALVATAGGIO
     # ======================================================
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
@@ -1238,16 +1260,19 @@ if st.session_state.section == "EOM":
             disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
         )
 
-        # Salva solo se ci sono modifiche (✅ SAFE: aggiorna FULL via Order)
-        has_changes = False
-        for col in visible_cols:
-            if col in edited.columns:
-                if not edited[col].equals(eom_view_df[col]):
-                    has_changes = True
-                    eom_view_df[col] = edited[col]
+        # ✅ FIX: Salvataggio più robusto
+        def df_to_comparable_dict(df):
+            """Converte DataFrame in dict comparabile per rilevare modifiche"""
+            return df[visible_cols].to_dict('records')
 
-        if has_changes:
+        current_state = df_to_comparable_dict(edited)
+        
+        if st.session_state.eom_last_saved_state is None:
+            st.session_state.eom_last_saved_state = df_to_comparable_dict(eom_view_df)
+        
+        if current_state != st.session_state.eom_last_saved_state:
             fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+            
             for c in month_cols:
                 if c not in fresh_full.columns:
                     fresh_full[c] = EOM_WHITE
@@ -1256,10 +1281,10 @@ if st.session_state.section == "EOM":
                 fresh_full["Order"] = range(len(fresh_full))
             fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
 
-            # mappa valori mesi dal view al full usando Order
+            # Mappa valori dai mesi modificati usando Order
             if "Order" in eom_view_df.columns:
-                for _, r in eom_view_df.iterrows():
-                    o = int(r["Order"])
+                for idx, r in edited.iterrows():
+                    o = int(eom_view_df.iloc[idx]["Order"])
                     mask = fresh_full["Order"] == o
                     if mask.any():
                         for c in visible_cols:
@@ -1268,7 +1293,10 @@ if st.session_state.section == "EOM":
 
             fresh_full["Last Update"] = pd.Timestamp.now()
             fresh_full = clean_eom_dataframe(fresh_full, month_cols)
-            save_to_gsheet(fresh_full, "EOM")
+            
+            if save_to_gsheet(fresh_full, "EOM"):
+                st.session_state.eom_last_saved_state = current_state
+                st.success("✅ Changes saved!", icon="💾")
 
         st.divider()
 
