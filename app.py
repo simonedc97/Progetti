@@ -340,7 +340,7 @@ def clean_eom_dataframe(df, month_cols):
             df[col] = df[col].apply(lambda x: 
                 "🟢" if str(x) in ["True", "true", "Done", "🟢", "1"] 
                 else "🔴" if str(x) in ["False", "false", "Undone", "🔴", "0"]
-                else "🔘"
+                else "⚪"
             )
     
     if "🗑️ Delete" in df.columns:
@@ -987,7 +987,7 @@ if st.session_state.section == "EOM":
                 )
 
             with f4:
-                status_vals = ["All", "🔘", "🟢", "🔴"]
+                status_vals = ["All", "⚪", "🟢", "🔴"]
                 eom_selected_status = st.selectbox(
                     f"Status ({current_month_col})",
                     status_vals,
@@ -1128,7 +1128,7 @@ if st.session_state.section == "EOM":
         for c in visible_cols:
             col_cfg[c] = st.column_config.SelectboxColumn(
                 c,
-                options=["🔘", "🟢", "🔴"],
+                options=["⚪", "🟢", "🔴"],
                 default="⚪",
                 width="small"
             )
@@ -1192,7 +1192,7 @@ if st.session_state.section == "EOM":
             column_config[col] = st.column_config.SelectboxColumn(
                 col,
                 help="🎯 **Current working month**" if is_current else "Future month",
-                options=["🔘", "🟢", "🔴"],
+                options=["⚪", "🟢", "🔴"],
                 default="⚪",
                 width="small"
             )
