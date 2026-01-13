@@ -924,6 +924,13 @@ if st.session_state.section == "EOM":
 
     eom_df = clean_eom_dataframe(eom_df, month_cols)
 
+    # ======================================================
+    # ✅ FIX: EOM FILTERS + SAFE VIEW/EDIT DATAFRAMES
+    # (non cambia nulla del resto: aggiunge solo ciò che mancava)
+    # ======================================================
+    eom_full_df = eom_df.copy()   # SEMPRE completo -> è quello che si salva
+    eom_view_df = eom_df.copy()   # quello che si mostra (eventualmente filtrato)
+
     col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     with col1:
         st.caption(f"🎯 **Current working month**: {current_month_col}")
@@ -944,6 +951,86 @@ if st.session_state.section == "EOM":
             st.rerun()
 
     st.divider()
+
+    # ======================================================
+    # ✅ EOM FILTERS (prima mancava completamente la UI/logic)
+    # ======================================================
+    if st.session_state.show_eom_filters and len(eom_full_df) > 0:
+        with st.expander("🔍 Filters (EOM)", expanded=True):
+            f1, f2, f3, f4 = st.columns(4)
+
+            with f1:
+                eom_areas = ["All"] + sorted(eom_full_df["Area"].dropna().unique().tolist())
+                eom_selected_area = st.selectbox(
+                    "Area",
+                    eom_areas,
+                    index=0,
+                    key=f"eom_filter_area_{st.session_state.reset_eom_filters_flag}"
+                )
+
+            with f2:
+                macro_vals = ["All"] + sorted([x for x in eom_full_df["ID Macro"].dropna().unique().tolist() if str(x).strip() != ""])
+                eom_selected_macro = st.selectbox(
+                    "ID Macro",
+                    macro_vals,
+                    index=0,
+                    key=f"eom_filter_macro_{st.session_state.reset_eom_filters_flag}"
+                )
+
+            with f3:
+                freq_vals = ["All"] + sorted([x for x in eom_full_df["Frequency"].dropna().unique().tolist() if str(x).strip() != ""])
+                eom_selected_freq = st.selectbox(
+                    "Frequency",
+                    freq_vals,
+                    index=0,
+                    key=f"eom_filter_freq_{st.session_state.reset_eom_filters_flag}"
+                )
+
+            with f4:
+                status_vals = ["All", "⚪", "🟢", "🔴"]
+                eom_selected_status = st.selectbox(
+                    f"Status ({current_month_col})",
+                    status_vals,
+                    index=0,
+                    key=f"eom_filter_status_{st.session_state.reset_eom_filters_flag}"
+                )
+
+            s1, s2, s3 = st.columns([3, 1, 2])
+            with s1:
+                eom_search = st.text_input(
+                    "Search in Activity / Files",
+                    value="",
+                    key=f"eom_filter_search_{st.session_state.reset_eom_filters_flag}"
+                )
+            with s2:
+                if st.button("🔄 Reset Filters", use_container_width=True):
+                    st.session_state.reset_eom_filters_flag += 1
+                    st.rerun()
+
+        # Apply filters
+        eom_view_df = eom_full_df.copy()
+
+        if eom_selected_area != "All":
+            eom_view_df = eom_view_df[eom_view_df["Area"] == eom_selected_area]
+
+        if eom_selected_macro != "All":
+            eom_view_df = eom_view_df[eom_view_df["ID Macro"] == eom_selected_macro]
+
+        if eom_selected_freq != "All":
+            eom_view_df = eom_view_df[eom_view_df["Frequency"] == eom_selected_freq]
+
+        if eom_selected_status != "All" and current_month_col in eom_view_df.columns:
+            eom_view_df = eom_view_df[eom_view_df[current_month_col] == eom_selected_status]
+
+        if eom_search and eom_search.strip():
+            pattern = re.escape(eom_search.strip())
+            eom_view_df = eom_view_df[
+                eom_view_df["Activity"].astype(str).str.contains(pattern, case=False, na=False) |
+                eom_view_df["Files"].astype(str).str.contains(pattern, case=False, na=False)
+            ]
+
+        st.info(f"📊 Showing {len(eom_view_df)} of {len(eom_full_df)} activities")
+        st.divider()
 
     # ======================================================
     # BULK DELETE MODE CON RINUMERAZIONE AUTOMATICA
@@ -1026,13 +1113,77 @@ if st.session_state.section == "EOM":
                     time.sleep(1)
                     st.rerun()
 
-    if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) > 0:
-        eom_df = eom_df.sort_values('Order').reset_index(drop=True)
+    # ======================================================
+    # ✅ FIX: EOM EDIT MODE (prima non esisteva alcuna UI)
+    # ======================================================
+    if st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
+        eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
+
+        visible_cols = [col for col in month_cols if col not in st.session_state.hidden_months]
+        edit_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols + ["Order"]
+
+        edit_df = eom_view_df[edit_cols].copy()
+
+        col_cfg = {}
+        for c in visible_cols:
+            col_cfg[c] = st.column_config.SelectboxColumn(
+                c,
+                options=["⚪", "🟢", "🔴"],
+                default="⚪",
+                width="small"
+            )
+
+        edited = st.data_editor(
+            edit_df,
+            use_container_width=True,
+            num_rows="fixed",
+            hide_index=True,
+            column_config=col_cfg,
+            disabled=["Order"],
+            key="eom_edit_editor"
+        )
+
+        # Salvataggio sicuro su FULL DF usando Order come chiave stabile
+        if not edited.equals(edit_df):
+            fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+            # assicurati di avere anche le colonne mesi nel fresh_full
+            for c in month_cols:
+                if c not in fresh_full.columns:
+                    fresh_full[c] = "⚪"
+
+            # pulizia tipi e garantisci Order
+            if "Order" not in fresh_full.columns:
+                fresh_full["Order"] = range(len(fresh_full))
+            fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
+
+            # Applica modifiche riga per riga
+            for _, r in edited.iterrows():
+                o = int(r["Order"])
+                mask = fresh_full["Order"] == o
+                if mask.any():
+                    for c in ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols:
+                        if c in fresh_full.columns and c in edited.columns:
+                            fresh_full.loc[mask, c] = r[c]
+
+            fresh_full["Last Update"] = pd.Timestamp.now()
+            fresh_full = renumber_eom_ids(fresh_full)
+            fresh_full = clean_eom_dataframe(fresh_full, month_cols)
+
+            save_to_gsheet(fresh_full, "EOM")
+            st.success("✅ Changes saved!", icon="💾")
+
+        st.divider()
+
+    # ======================================================
+    # VIEW MODE (come prima) + ✅ FIX: usa eom_view_df ma salva senza perdere righe
+    # ======================================================
+    if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
+        eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
         
         visible_cols = [col for col in month_cols if col not in st.session_state.hidden_months]
         
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols
-        display_df = eom_df[display_cols].copy()
+        display_df = eom_view_df[display_cols].copy()
         
         column_config = {}
         
@@ -1056,17 +1207,37 @@ if st.session_state.section == "EOM":
             disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
         )
 
-        # Salva solo se ci sono modifiche
+        # Salva solo se ci sono modifiche (✅ SAFE: aggiorna FULL via Order)
         has_changes = False
         for col in visible_cols:
             if col in edited.columns:
-                if not edited[col].equals(eom_df[col]):
+                if not edited[col].equals(eom_view_df[col]):
                     has_changes = True
-                    eom_df[col] = edited[col]
-                    eom_df["Last Update"] = pd.Timestamp.now()
+                    eom_view_df[col] = edited[col]
 
         if has_changes:
-            save_to_gsheet(eom_df, "EOM")
+            fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+            for c in month_cols:
+                if c not in fresh_full.columns:
+                    fresh_full[c] = "⚪"
+
+            if "Order" not in fresh_full.columns:
+                fresh_full["Order"] = range(len(fresh_full))
+            fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
+
+            # mappa valori mesi dal view al full usando Order
+            if "Order" in eom_view_df.columns:
+                for _, r in eom_view_df.iterrows():
+                    o = int(r["Order"])
+                    mask = fresh_full["Order"] == o
+                    if mask.any():
+                        for c in visible_cols:
+                            if c in fresh_full.columns:
+                                fresh_full.loc[mask, c] = r[c]
+
+            fresh_full["Last Update"] = pd.Timestamp.now()
+            fresh_full = clean_eom_dataframe(fresh_full, month_cols)
+            save_to_gsheet(fresh_full, "EOM")
 
         st.divider()
         
