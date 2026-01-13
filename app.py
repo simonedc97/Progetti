@@ -260,6 +260,8 @@ if "show_month_manager" not in st.session_state:
     st.session_state.show_month_manager = False
 if "eom_last_saved_state" not in st.session_state:
     st.session_state.eom_last_saved_state = None
+if "show_old_months" not in st.session_state:
+    st.session_state.show_old_months = False
 
 # =========================
 # HELPERS
@@ -392,39 +394,67 @@ def last_working_day(year, month):
     return last_day
 
 def get_next_months(n=6, include_previous=True):
-    """Genera i mesi da visualizzare: 4 precedenti + current + 1 successivo"""
+    """Genera TUTTI i mesi (anche quelli vecchi per mantenere i dati)"""
     today = date.today()
-    months = []
+    all_months = []
     
     # Il "current working month" è il mese precedente a quello attuale
-    # (es. a Gennaio 2025 lavoriamo su Dicembre 2024)
     current_year = today.year
     current_month = today.month - 1
     if current_month < 1:
         current_month = 12
         current_year -= 1
     
-    # Aggiungi 4 mesi precedenti al current working month
+    # Genera mesi partendo da 12 mesi fa (per mantenere storico)
+    for i in range(12, -2, -1):  # Da -12 a +1 mese
+        month = current_month - i
+        year = current_year
+        while month < 1:
+            month += 12
+            year -= 1
+        while month > 12:
+            month -= 12
+            year += 1
+        all_months.append((year, month))
+    
+    # Rimuovi duplicati e ordina
+    all_months = sorted(list(set(all_months)))
+    
+    return all_months
+
+def get_visible_months():
+    """Restituisce solo i mesi da visualizzare: 4 precedenti + current + 1 successivo"""
+    today = date.today()
+    visible_months = []
+    
+    # Current working month
+    current_year = today.year
+    current_month = today.month - 1
+    if current_month < 1:
+        current_month = 12
+        current_year -= 1
+    
+    # 4 mesi precedenti
     for i in range(4, 0, -1):
         month = current_month - i
         year = current_year
         while month < 1:
             month += 12
             year -= 1
-        months.append((year, month))
+        visible_months.append((year, month))
     
-    # Aggiungi il current working month
-    months.append((current_year, current_month))
+    # Current month
+    visible_months.append((current_year, current_month))
     
-    # Aggiungi 1 mese successivo
+    # 1 mese successivo
     month = current_month + 1
     year = current_year
     if month > 12:
         month = 1
         year += 1
-    months.append((year, month))
+    visible_months.append((year, month))
     
-    return months
+    return visible_months
 
 # =========================
 # CARICA DATI (CON CACHE)
@@ -946,14 +976,21 @@ if st.session_state.section == "EOM":
         except:
             st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
 
-    # ✅ NUOVA LOGICA MESI: 4 precedenti + current + 1 successivo
-    months = get_next_months()
-    eom_dates = [last_working_day(y, m) for y, m in months]
-    month_cols = [d.strftime("%d %B %Y") for d in eom_dates]
+    # ✅ TUTTI I MESI (per mantenere i dati su Google Sheets)
+    all_months = get_next_months()
+    all_eom_dates = [last_working_day(y, m) for y, m in all_months]
+    all_month_cols = [d.strftime("%d %B %Y") for d in all_eom_dates]
     
-    # Il current working month è il 5° nella lista (indice 4)
-    # perché abbiamo: [mes-4, mes-3, mes-2, mes-1, CURRENT, mes+1]
-    current_month_col = month_cols[4]
+    # ✅ MESI VISIBILI (4 precedenti + current + 1 successivo)
+    visible_months = get_visible_months()
+    visible_eom_dates = [last_working_day(y, m) for y, m in visible_months]
+    visible_month_cols = [d.strftime("%d %B %Y") for d in visible_eom_dates]
+    
+    # Il current working month è il 5° nella lista dei visibili (indice 4)
+    current_month_col = visible_month_cols[4]
+    
+    # ✅ Mesi vecchi (non visibili di default)
+    old_month_cols = [col for col in all_month_cols if col not in visible_month_cols]
 
     for col in EOM_BASE_COLUMNS:
         if col not in eom_df.columns:
@@ -962,11 +999,12 @@ if st.session_state.section == "EOM":
             else:
                 eom_df[col] = ""
 
-    for c in month_cols:
+    # ✅ Crea colonne per TUTTI i mesi (anche quelli vecchi)
+    for c in all_month_cols:
         if c not in eom_df.columns:
             eom_df[c] = EOM_WHITE  # ✅ default white
 
-    eom_df = clean_eom_dataframe(eom_df, month_cols)
+    eom_df = clean_eom_dataframe(eom_df, all_month_cols)
 
     # ======================================================
     # ✅ FIX: EOM FILTERS + SAFE VIEW/EDIT DATAFRAMES
@@ -1039,7 +1077,7 @@ if st.session_state.section == "EOM":
                     key=f"eom_filter_status_{st.session_state.reset_eom_filters_flag}"
                 )
 
-            s1, s2, s3 = st.columns([3, 1, 2])
+            s1, s2, s3 = st.columns([2, 1, 1])
             with s1:
                 eom_search = st.text_input(
                     "Search in Activity / Files",
@@ -1047,8 +1085,19 @@ if st.session_state.section == "EOM":
                     key=f"eom_filter_search_{st.session_state.reset_eom_filters_flag}"
                 )
             with s2:
+                # ✅ NUOVO: Toggle per mostrare mesi vecchi
+                show_old = st.checkbox(
+                    "📅 Show old months",
+                    value=st.session_state.show_old_months,
+                    key=f"show_old_months_{st.session_state.reset_eom_filters_flag}"
+                )
+                if show_old != st.session_state.show_old_months:
+                    st.session_state.show_old_months = show_old
+                    st.rerun()
+            with s3:
                 if st.button("🔄 Reset Filters", use_container_width=True):
                     st.session_state.reset_eom_filters_flag += 1
+                    st.session_state.show_old_months = False
                     st.rerun()
 
         # Apply filters
@@ -1144,7 +1193,8 @@ if st.session_state.section == "EOM":
                     "Last Update": pd.Timestamp.now(),
                     "Order": next_order
                 }
-                for c in month_cols:
+                # ✅ Aggiungi TUTTI i mesi (anche quelli vecchi)
+                for c in all_month_cols:
                     row[c] = EOM_WHITE  # ✅ default white
 
                 fresh_eom = pd.concat([fresh_eom, pd.DataFrame([row])], ignore_index=True)
@@ -1163,15 +1213,23 @@ if st.session_state.section == "EOM":
     if st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
 
-        visible_cols = [col for col in month_cols if col not in st.session_state.hidden_months]
-        edit_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols + ["Order"]
+        # ✅ Mostra mesi visibili o tutti se richiesto
+        if st.session_state.show_old_months:
+            display_month_cols = all_month_cols
+            st.info(f"📅 Showing all months including old ones ({len(old_month_cols)} hidden by default)")
+        else:
+            display_month_cols = visible_month_cols
+
+        edit_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols + ["Order"]
 
         edit_df = eom_view_df[edit_cols].copy()
 
         col_cfg = {}
-        for c in visible_cols:
+        for c in display_month_cols:
+            is_current = (c == current_month_col)
             col_cfg[c] = st.column_config.SelectboxColumn(
                 c,
+                help="🎯 **Current working month**" if is_current else ("📦 Old month" if c in old_month_cols else "Future month"),
                 options=EOM_STATUS_OPTIONS,  # ✅ 4 dots
                 default=EOM_WHITE,
                 width="small"
@@ -1187,20 +1245,23 @@ if st.session_state.section == "EOM":
             key="eom_edit_editor"
         )
 
-        # ✅ FIX: Salvataggio più robusto - confronta con stato salvato invece che con edit_df
+        # ✅ FIX: Salvataggio robusto senza messaggi e senza bug
         def df_to_comparable_dict(df):
             """Converte DataFrame in dict comparabile per rilevare modifiche"""
             return df.to_dict('records')
 
         current_state = df_to_comparable_dict(edited)
         
+        # Inizializza lo stato salvato alla prima esecuzione
         if st.session_state.eom_last_saved_state is None:
             st.session_state.eom_last_saved_state = df_to_comparable_dict(edit_df)
         
+        # Rileva modifiche confrontando con lo stato salvato
         if current_state != st.session_state.eom_last_saved_state:
             fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
             
-            for c in month_cols:
+            # Aggiungi tutte le colonne mesi che potrebbero esistere (anche quelle nascoste)
+            for c in all_month_cols:
                 if c not in fresh_full.columns:
                     fresh_full[c] = EOM_WHITE
 
@@ -1213,17 +1274,18 @@ if st.session_state.section == "EOM":
                 o = int(r["Order"])
                 mask = fresh_full["Order"] == o
                 if mask.any():
-                    for c in ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols:
+                    for c in ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols:
                         if c in fresh_full.columns and c in edited.columns:
                             fresh_full.loc[mask, c] = r[c]
 
             fresh_full["Last Update"] = pd.Timestamp.now()
             fresh_full = renumber_eom_ids(fresh_full)
-            fresh_full = clean_eom_dataframe(fresh_full, month_cols)
+            fresh_full = clean_eom_dataframe(fresh_full, all_month_cols)
 
             if save_to_gsheet(fresh_full, "EOM"):
+                # ✅ Aggiorna lo stato salvato IMMEDIATAMENTE dopo il salvataggio
                 st.session_state.eom_last_saved_state = current_state
-                st.success("✅ Changes saved!", icon="💾")
+                # ✅ NO messaggio di salvataggio
 
         st.divider()
 
@@ -1233,18 +1295,24 @@ if st.session_state.section == "EOM":
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
 
-        visible_cols = [col for col in month_cols if col not in st.session_state.hidden_months]
+        # ✅ Mostra mesi visibili o tutti se richiesto
+        if st.session_state.show_old_months:
+            display_month_cols = all_month_cols
+            st.info(f"📅 Showing all months including old ones ({len(old_month_cols)} hidden by default)")
+        else:
+            display_month_cols = visible_month_cols
 
-        display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + visible_cols
+        display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols
         display_df = eom_view_df[display_cols].copy()
 
         column_config = {}
 
-        for i, col in enumerate(visible_cols):
+        for i, col in enumerate(display_month_cols):
             is_current = (col == current_month_col)
+            is_old = col in old_month_cols
             column_config[col] = st.column_config.SelectboxColumn(
                 col,
-                help="🎯 **Current working month**" if is_current else "Future month",
+                help="🎯 **Current working month**" if is_current else ("📦 Old month" if is_old else "Future month"),
                 options=EOM_STATUS_OPTIONS,  # ✅ 4 dots
                 default=EOM_WHITE,
                 width="small"
@@ -1260,20 +1328,23 @@ if st.session_state.section == "EOM":
             disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
         )
 
-        # ✅ FIX: Salvataggio più robusto
+        # ✅ FIX: Salvataggio robusto senza messaggi e senza bug
         def df_to_comparable_dict(df):
             """Converte DataFrame in dict comparabile per rilevare modifiche"""
-            return df[visible_cols].to_dict('records')
+            return df[display_month_cols].to_dict('records')
 
         current_state = df_to_comparable_dict(edited)
         
+        # Inizializza lo stato salvato alla prima esecuzione
         if st.session_state.eom_last_saved_state is None:
             st.session_state.eom_last_saved_state = df_to_comparable_dict(eom_view_df)
         
+        # Rileva modifiche confrontando con lo stato salvato
         if current_state != st.session_state.eom_last_saved_state:
             fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
             
-            for c in month_cols:
+            # Aggiungi tutte le colonne mesi che potrebbero esistere (anche quelle nascoste)
+            for c in all_month_cols:
                 if c not in fresh_full.columns:
                     fresh_full[c] = EOM_WHITE
 
@@ -1287,16 +1358,17 @@ if st.session_state.section == "EOM":
                     o = int(eom_view_df.iloc[idx]["Order"])
                     mask = fresh_full["Order"] == o
                     if mask.any():
-                        for c in visible_cols:
+                        for c in display_month_cols:
                             if c in fresh_full.columns:
                                 fresh_full.loc[mask, c] = r[c]
 
             fresh_full["Last Update"] = pd.Timestamp.now()
-            fresh_full = clean_eom_dataframe(fresh_full, month_cols)
+            fresh_full = clean_eom_dataframe(fresh_full, all_month_cols)
             
             if save_to_gsheet(fresh_full, "EOM"):
+                # ✅ Aggiorna lo stato salvato IMMEDIATAMENTE dopo il salvataggio
                 st.session_state.eom_last_saved_state = current_state
-                st.success("✅ Changes saved!", icon="💾")
+                # ✅ NO messaggio di salvataggio
 
         st.divider()
 
