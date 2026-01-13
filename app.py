@@ -739,7 +739,7 @@ if st.session_state.section == "EOM":
             st.session_state.show_eom_filters = not st.session_state.show_eom_filters
             st.rerun()
     with col3:
-    if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
+        if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
                      use_container_width=True):
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
