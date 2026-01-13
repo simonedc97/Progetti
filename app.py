@@ -739,7 +739,7 @@ if st.session_state.section == "EOM":
             st.session_state.show_eom_filters = not st.session_state.show_eom_filters
             st.rerun()
     with col3:
-        if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
+    if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", 
                      use_container_width=True):
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
@@ -750,7 +750,6 @@ if st.session_state.section == "EOM":
             st.rerun()
 
     st.divider()
-st.divider()
 
     # ======================================================
     # BULK DELETE MODE
@@ -787,7 +786,6 @@ st.divider()
         
         st.divider()
 
-    with st.expander("➕ Add new End-of-Month Activity", expanded=False):
     with st.expander("➕ Add new End-of-Month Activity", expanded=False):
         c1, c2, c3 = st.columns(3)
         area = c1.text_input("Area", key="eom_area")
