@@ -656,10 +656,70 @@ if st.session_state.section == "Projects":
                     with expand:
                         st.progress(completion / 100)
                         
-                        if not st.session_state.edit_mode:
-                            for idx, r in proj_df.iterrows():
-                                cols = st.columns([10, 1])
-                                with cols[0]:
+                        for idx, r in proj_df.iterrows():
+                            cols = st.columns([10, 1])
+                            with cols[0]:
+                                if st.session_state.edit_mode:
+                                    # EDIT MODE - Mostra campi editabili
+                                    st.markdown(f"**Edit Task: {r['Task']}**")
+                                    
+                                    new_task = st.text_input("Task Name", value=r['Task'], key=f"edit_task_{idx}")
+                                    new_owner = st.text_input("Owner", value=r['Owner'], key=f"edit_owner_{idx}")
+                                    
+                                    col_a, col_b = st.columns(2)
+                                    with col_a:
+                                        new_priority = st.selectbox("Priority", ["Low", "Important", "Urgent"], 
+                                                                   index=["Low", "Important", "Urgent"].index(r['Priority']) if r['Priority'] in ["Low", "Important", "Urgent"] else 0,
+                                                                   key=f"edit_priority_{idx}")
+                                    with col_b:
+                                        new_progress = st.selectbox("Status", progress_values, 
+                                                                   index=progress_values.index(r['Progress']) if r['Progress'] in progress_values else 0,
+                                                                   key=f"edit_progress_{idx}")
+                                    
+                                    col_c, col_d = st.columns(2)
+                                    with col_c:
+                                        current_release = r['Release Date'].date() if pd.notna(r['Release Date']) else None
+                                        new_release = st.date_input("Release Date", value=current_release, key=f"edit_release_{idx}")
+                                    with col_d:
+                                        current_due = r['Due Date'].date() if pd.notna(r['Due Date']) else None
+                                        new_due = st.date_input("Due Date", value=current_due, key=f"edit_due_{idx}")
+                                    
+                                    gr_text = r.get('GR/Mail Object', '')
+                                    if '\n' in gr_text:
+                                        parts = gr_text.split('\n', 1)
+                                        current_gr = parts[0].strip()
+                                        current_mail = parts[1].strip() if len(parts) > 1 else ''
+                                    else:
+                                        current_gr = gr_text
+                                        current_mail = ''
+                                    
+                                    col_gr, col_mail = st.columns(2)
+                                    with col_gr:
+                                        new_gr = st.text_area("📋 GR Number", value=current_gr, key=f"edit_gr_{idx}", height=80)
+                                    with col_mail:
+                                        new_mail = st.text_area("📧 Mail Object", value=current_mail, key=f"edit_mail_{idx}", height=80)
+                                    
+                                    new_notes = st.text_area("📝 Notes", value=r.get('Notes', ''), key=f"edit_notes_{idx}", height=80)
+                                    
+                                    if st.button("💾 Save Changes", key=f"save_edit_{idx}", type="primary"):
+                                        fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
+                                        fresh_df.loc[idx, "Task"] = new_task
+                                        fresh_df.loc[idx, "Owner"] = new_owner
+                                        fresh_df.loc[idx, "Priority"] = new_priority
+                                        fresh_df.loc[idx, "Progress"] = new_progress
+                                        fresh_df.loc[idx, "Release Date"] = pd.Timestamp(new_release) if new_release else pd.NaT
+                                        fresh_df.loc[idx, "Due Date"] = pd.Timestamp(new_due) if new_due else pd.NaT
+                                        fresh_df.loc[idx, "GR/Mail Object"] = f"{new_gr}\n{new_mail}" if new_gr or new_mail else ""
+                                        fresh_df.loc[idx, "Notes"] = new_notes
+                                        fresh_df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                        
+                                        if save_to_gsheet(fresh_df, "Projects"):
+                                            st.success("✅ Changes saved!")
+                                            time.sleep(1)
+                                            st.rerun()
+                                
+                                else:
+                                    # VIEW MODE - Mostra dati come prima
                                     st.markdown(f"**{r['Task']}**")
                                     st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
                                     
@@ -714,12 +774,12 @@ if st.session_state.section == "Projects":
                                             time.sleep(0.5)
                                             st.rerun()
 
-                                with cols[1]:
-                                    if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
-                                        st.session_state.confirm_delete_task = (project, r['Task'])
-                                        st.rerun()
-                                
-                                st.divider()
+                            with cols[1]:
+                                if st.button("🗑️", key=f"delete_task_{project}_{r['Task']}"):
+                                    st.session_state.confirm_delete_task = (project, r['Task'])
+                                    st.rerun()
+                            
+                            st.divider()
                 
                 st.divider()
         
