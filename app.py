@@ -29,7 +29,7 @@ EOM_BASE_COLUMNS = [
 # ✅ NEW: EOM STATUS DOTS (white default + gray/green/red)
 # =========================
 EOM_WHITE = "⚪"   # default / not answered
-EOM_GRAY  = "🔘"   # not to do (excluded from denominator)
+EOM_GRAY  = "⚫"   # not to do (excluded from denominator)
 EOM_GREEN = "🟢"   # done
 EOM_RED   = "🔴"   # not done
 EOM_STATUS_OPTIONS = [EOM_WHITE, EOM_GRAY, EOM_GREEN, EOM_RED]
