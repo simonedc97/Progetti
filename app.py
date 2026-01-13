@@ -750,7 +750,44 @@ if st.session_state.section == "EOM":
             st.rerun()
 
     st.divider()
+st.divider()
 
+    # ======================================================
+    # BULK DELETE MODE
+    # ======================================================
+    if st.session_state.eom_bulk_delete and len(eom_df) > 0:
+        st.warning("🗑️ **Delete Mode**: Select activities to delete")
+        
+        selected_to_delete = []
+        for idx, row in eom_df.iterrows():
+            col1, col2 = st.columns([1, 10])
+            with col1:
+                if st.checkbox("", key=f"bulk_select_{idx}"):
+                    selected_to_delete.append(idx)
+            with col2:
+                st.write(f"**{row['Activity']}** ({row['Area']} - {row['ID Macro']}/{row['ID Micro']})")
+        
+        st.divider()
+        
+        if selected_to_delete:
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
+                    # Ricarica dati freschi
+                    fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+                    fresh_eom = fresh_eom.drop(selected_to_delete).reset_index(drop=True)
+                    
+                    if save_to_gsheet(fresh_eom, "EOM"):
+                        st.success(f"✅ {len(selected_to_delete)} activities deleted!")
+                        st.session_state.eom_bulk_delete = False
+                        time.sleep(1)
+                        st.rerun()
+        else:
+            st.info("👆 Select activities above to delete them")
+        
+        st.divider()
+
+    with st.expander("➕ Add new End-of-Month Activity", expanded=False):
     with st.expander("➕ Add new End-of-Month Activity", expanded=False):
         c1, c2, c3 = st.columns(3)
         area = c1.text_input("Area", key="eom_area")
