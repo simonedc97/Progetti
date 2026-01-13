@@ -1235,39 +1235,29 @@ if st.session_state.section == "EOM":
 
         edit_df = eom_view_df[edit_cols].copy()
 
-        # ✅ COLORE AZZURRO per current working month
-        st.markdown(f"""
-        <style>
-        /* Colora header del current working month in azzurro */
-        div[data-testid="stDataFrameResizable"] table thead th:has(div:contains("{current_month_col}")) {{
-            background-color: #87CEEB !important;
-            font-weight: bold !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
+        # ✅ INDICATORE VISIVO: Rinomina current month con emoji blu
+        current_month_display = f"🔵 {current_month_col}"
+        if current_month_col in edit_df.columns:
+            edit_df = edit_df.rename(columns={current_month_col: current_month_display})
+            display_month_cols_renamed = [current_month_display if c == current_month_col else c for c in display_month_cols]
+        else:
+            display_month_cols_renamed = display_month_cols
 
         col_cfg = {}
-        for c in display_month_cols:
-            is_current = (c == current_month_col)
-            is_old = c in old_month_cols
+        for c in display_month_cols_renamed:
+            is_current = (c == current_month_display)
             
-            # ✅ Colore azzurro per current working month
-            if is_current:
-                col_cfg[c] = st.column_config.SelectboxColumn(
-                    c,
-                    help="🎯 **Current working month**",
-                    options=EOM_STATUS_OPTIONS,
-                    default=EOM_WHITE,
-                    width="small"
-                )
-            else:
-                col_cfg[c] = st.column_config.SelectboxColumn(
-                    c,
-                    help="📦 Old month" if is_old else "Future month",
-                    options=EOM_STATUS_OPTIONS,
-                    default=EOM_WHITE,
-                    width="small"
-                )
+            # Trova il nome originale per verificare se è old
+            original_col = current_month_col if is_current else c
+            is_old = original_col in old_month_cols
+            
+            col_cfg[c] = st.column_config.SelectboxColumn(
+                c,
+                help="🎯 **Current working month**" if is_current else ("📦 Old month" if is_old else "Future month"),
+                options=EOM_STATUS_OPTIONS,
+                default=EOM_WHITE,
+                width="medium" if is_current else "small"
+            )
 
         edited = st.data_editor(
             edit_df,
@@ -1280,6 +1270,12 @@ if st.session_state.section == "EOM":
         )
 
         # ✅ FIX: Salvataggio robusto senza messaggi e senza bug
+        # Rinomina indietro per il salvataggio
+        current_month_display = f"🔵 {current_month_col}"
+        edited_original_names = edited.copy()
+        if current_month_display in edited_original_names.columns:
+            edited_original_names = edited_original_names.rename(columns={current_month_display: current_month_col})
+        
         def df_to_comparable_dict(df):
             """Converte DataFrame in dict comparabile per rilevare modifiche"""
             return df.to_dict('records')
@@ -1303,13 +1299,13 @@ if st.session_state.section == "EOM":
                 fresh_full["Order"] = range(len(fresh_full))
             fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
 
-            # Applica modifiche riga per riga usando Order come chiave
-            for _, r in edited.iterrows():
+            # Applica modifiche riga per riga usando Order come chiave (usa nomi originali)
+            for _, r in edited_original_names.iterrows():
                 o = int(r["Order"])
                 mask = fresh_full["Order"] == o
                 if mask.any():
                     for c in ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols:
-                        if c in fresh_full.columns and c in edited.columns:
+                        if c in fresh_full.columns and c in edited_original_names.columns:
                             fresh_full.loc[mask, c] = r[c]
 
             fresh_full["Last Update"] = pd.Timestamp.now()
@@ -1324,7 +1320,7 @@ if st.session_state.section == "EOM":
         st.divider()
 
     # ======================================================
-    # ✅ VIEW MODE CON FIX SALVATAGGIO STABILE + COLORE AZZURRO
+    # ✅ VIEW MODE - SISTEMA SALVATAGGIO DEFINITIVO
     # ======================================================
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
@@ -1332,7 +1328,6 @@ if st.session_state.section == "EOM":
         # ✅ Mostra mesi visibili + mesi vecchi selezionati
         display_month_cols = visible_month_cols.copy()
         if st.session_state.selected_old_months:
-            # Aggiungi i mesi vecchi selezionati PRIMA dei mesi visibili (in ordine cronologico)
             selected_sorted = sorted(st.session_state.selected_old_months, 
                                     key=lambda x: all_month_cols.index(x))
             display_month_cols = selected_sorted + display_month_cols
@@ -1341,34 +1336,38 @@ if st.session_state.section == "EOM":
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols
         display_df = eom_view_df[display_cols].copy()
 
-        # ✅ COLORE AZZURRO per current working month + configurazione colonne
+        # ✅ INDICATORE VISIVO: Rinomina current month con emoji azzurro
         column_config = {}
+        display_df_renamed = display_df.copy()
         
-        # CSS personalizzato per colorare l'header azzurro
-        st.markdown(f"""
-        <style>
-        /* Colora header del current working month in azzurro */
-        div[data-testid="stDataFrameResizable"] table thead th:has(div:contains("{current_month_col}")) {{
-            background-color: #87CEEB !important;
-            font-weight: bold !important;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
+        current_month_display = f"🔵 {current_month_col}"
+        if current_month_col in display_df_renamed.columns:
+            display_df_renamed = display_df_renamed.rename(columns={current_month_col: current_month_display})
+            display_month_cols_renamed = [current_month_display if c == current_month_col else c for c in display_month_cols]
+        else:
+            display_month_cols_renamed = display_month_cols
 
-        for i, col in enumerate(display_month_cols):
-            is_current = (col == current_month_col)
-            is_old = col in old_month_cols
+        for i, col in enumerate(display_month_cols_renamed):
+            is_current = (col == current_month_display)
+            
+            # Trova il nome originale per verificare se è old
+            original_col = current_month_col if is_current else col
+            is_old = original_col in old_month_cols
             
             column_config[col] = st.column_config.SelectboxColumn(
                 col,
                 help="🎯 **Current working month**" if is_current else ("📦 Old month" if is_old else "Future month"),
                 options=EOM_STATUS_OPTIONS,
                 default=EOM_WHITE,
-                width="small"
+                width="medium" if is_current else "small"
             )
 
+        # Inizializza stato di confronto se non esiste
+        if 'eom_view_snapshot' not in st.session_state:
+            st.session_state.eom_view_snapshot = display_df_renamed.copy()
+
         edited = st.data_editor(
-            display_df,
+            display_df_renamed,
             use_container_width=True,
             num_rows="fixed",
             column_config=column_config,
@@ -1377,60 +1376,48 @@ if st.session_state.section == "EOM":
             disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
         )
 
-        # ✅ SISTEMA DI SALVATAGGIO ULTRA-STABILE
-        # Usa un hash per rilevare modifiche invece di confronto diretto
-        import hashlib
-        import json
+        # ✅ SALVATAGGIO SEMPLIFICATO - Confronta solo se veramente diverso
+        changes_detected = False
         
-        def compute_hash(df):
-            """Calcola hash MD5 del DataFrame per rilevare modifiche"""
-            try:
-                # Converti solo le colonne mesi in JSON ordinato
-                data = df[display_month_cols].to_dict('records')
-                json_str = json.dumps(data, sort_keys=True, default=str)
-                return hashlib.md5(json_str.encode()).hexdigest()
-            except:
-                return None
+        # Rinomina indietro per confronto
+        edited_original_names = edited.rename(columns={current_month_display: current_month_col})
         
-        current_hash = compute_hash(edited)
+        for month_col in display_month_cols:
+            if month_col in eom_view_df.columns and month_col in edited_original_names.columns:
+                if not edited_original_names[month_col].equals(eom_view_df[month_col]):
+                    changes_detected = True
+                    break
         
-        # Inizializza l'hash salvato
-        if 'eom_view_saved_hash' not in st.session_state:
-            st.session_state.eom_view_saved_hash = compute_hash(eom_view_df)
-        
-        # Salva solo se l'hash è cambiato
-        if current_hash and current_hash != st.session_state.eom_view_saved_hash:
-            try:
-                fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-                
-                # Aggiungi tutte le colonne mesi
-                for c in all_month_cols:
-                    if c not in fresh_full.columns:
-                        fresh_full[c] = EOM_WHITE
+        if changes_detected:
+            # Salva immediatamente
+            fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+            
+            for c in all_month_cols:
+                if c not in fresh_full.columns:
+                    fresh_full[c] = EOM_WHITE
 
-                if "Order" not in fresh_full.columns:
-                    fresh_full["Order"] = range(len(fresh_full))
-                fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
+            if "Order" not in fresh_full.columns:
+                fresh_full["Order"] = range(len(fresh_full))
+            fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
 
-                # Mappa valori dai mesi modificati usando Order
-                if "Order" in eom_view_df.columns:
-                    for idx, r in edited.iterrows():
-                        o = int(eom_view_df.iloc[idx]["Order"])
-                        mask = fresh_full["Order"] == o
-                        if mask.any():
-                            for c in display_month_cols:
-                                if c in fresh_full.columns:
-                                    fresh_full.loc[mask, c] = r[c]
+            # Applica modifiche
+            if "Order" in eom_view_df.columns:
+                for idx, r in edited_original_names.iterrows():
+                    o = int(eom_view_df.iloc[idx]["Order"])
+                    mask = fresh_full["Order"] == o
+                    if mask.any():
+                        for c in display_month_cols:
+                            if c in fresh_full.columns and c in edited_original_names.columns:
+                                fresh_full.loc[mask, c] = r[c]
 
-                fresh_full["Last Update"] = pd.Timestamp.now()
-                fresh_full = clean_eom_dataframe(fresh_full, all_month_cols)
-                
-                if save_to_gsheet(fresh_full, "EOM"):
-                    # Aggiorna l'hash salvato
-                    st.session_state.eom_view_saved_hash = current_hash
-                    
-            except Exception as e:
-                st.error(f"Error saving: {e}")
+            fresh_full["Last Update"] = pd.Timestamp.now()
+            fresh_full = clean_eom_dataframe(fresh_full, all_month_cols)
+            
+            if save_to_gsheet(fresh_full, "EOM"):
+                # Aggiorna snapshot dopo salvataggio
+                st.session_state.eom_view_snapshot = edited.copy()
+                time.sleep(0.3)
+                st.rerun()
 
         st.divider()
 
