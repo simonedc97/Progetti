@@ -6,6 +6,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 import json
 import time
+import socket
 
 # =========================
 # CONFIG
@@ -23,7 +24,7 @@ EOM_BASE_COLUMNS = [
 ]
 
 # =========================
-# GOOGLE SHEETS FUNCTIONS - VERSIONE STABILE
+# GOOGLE SHEETS FUNCTIONS - VERSIONE OTTIMIZZATA
 # =========================
 @st.cache_resource
 def get_gsheet_service():
@@ -43,6 +44,9 @@ def save_to_gsheet(df, sheet_name):
         try:
             service = get_gsheet_service()
             spreadsheet_id = st.secrets["spreadsheet_id"]
+            
+            # Imposta timeout
+            socket.setdefaulttimeout(15)
             
             # Prepara i dati in modo sicuro
             df_copy = df.copy()
@@ -70,7 +74,7 @@ def save_to_gsheet(df, sheet_name):
             ).execute()
             
             # Aspetta un momento per assicurare che la cancellazione sia completata
-            time.sleep(0.5)
+            time.sleep(0.3)
             
             # Poi scrivi i nuovi dati
             service.spreadsheets().values().update(
@@ -80,12 +84,24 @@ def save_to_gsheet(df, sheet_name):
                 body={'values': values}
             ).execute()
             
+            # Invalida cache dopo salvataggio
+            st.cache_data.clear()
+            
             return True
             
+        except socket.timeout:
+            retry_count += 1
+            if retry_count < max_retries:
+                st.warning(f"⏱️ Timeout - tentativo {retry_count}/{max_retries}...")
+                time.sleep(2)
+                continue
+            else:
+                st.error("❌ Timeout: impossibile connettersi a Google Sheets")
+                return False
         except Exception as e:
             retry_count += 1
             if retry_count < max_retries:
-                time.sleep(1)  # Aspetta prima di riprovare
+                time.sleep(1)
                 continue
             else:
                 st.error(f"❌ Errore nel salvataggio dopo {max_retries} tentativi: {e}")
@@ -94,7 +110,7 @@ def save_to_gsheet(df, sheet_name):
     return False
 
 def load_from_gsheet(sheet_name, columns, date_cols=None):
-    """Carica DataFrame da Google Sheets - VERSIONE STABILE"""
+    """Carica DataFrame da Google Sheets - VERSIONE OTTIMIZZATA"""
     max_retries = 3
     retry_count = 0
     
@@ -102,6 +118,9 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
         try:
             service = get_gsheet_service()
             spreadsheet_id = st.secrets["spreadsheet_id"]
+            
+            # Imposta timeout
+            socket.setdefaulttimeout(15)
             
             result = service.spreadsheets().values().get(
                 spreadsheetId=spreadsheet_id,
@@ -150,6 +169,15 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
             
             return df
             
+        except socket.timeout:
+            retry_count += 1
+            if retry_count < max_retries:
+                st.warning(f"⏱️ Timeout caricamento - tentativo {retry_count}/{max_retries}...")
+                time.sleep(2)
+                continue
+            else:
+                st.error("❌ Timeout: impossibile caricare i dati da Google Sheets")
+                return pd.DataFrame(columns=columns)
         except Exception as e:
             retry_count += 1
             if retry_count < max_retries:
@@ -160,6 +188,28 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
                 return pd.DataFrame(columns=columns)
     
     return pd.DataFrame(columns=columns)
+
+# =========================
+# LOAD DATA CON CACHE
+# =========================
+@st.cache_data(ttl=30)  # Cache per 30 secondi
+def load_projects_data():
+    """Carica dati Projects con cache"""
+    df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
+    df["Owner"] = df["Owner"].fillna("")
+    df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
+    df["Notes"] = df["Notes"].fillna("")
+    return df
+
+@st.cache_data(ttl=30)  # Cache per 30 secondi
+def load_eom_data():
+    """Carica dati EOM con cache"""
+    eom_df = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
+    if "Last Update" not in eom_df.columns:
+        eom_df["Last Update"] = pd.Timestamp.now()
+    if "Order" not in eom_df.columns:
+        eom_df["Order"] = range(len(eom_df))
+    return eom_df
 
 # =========================
 # SESSION STATE
@@ -267,18 +317,10 @@ def get_next_months(n=6, include_previous=True):
     return months
 
 # =========================
-# LOAD DATA
+# CARICA DATI (CON CACHE)
 # =========================
-df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
-df["Owner"] = df["Owner"].fillna("")
-df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
-df["Notes"] = df["Notes"].fillna("")
-
-eom_df = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-if "Last Update" not in eom_df.columns:
-    eom_df["Last Update"] = pd.Timestamp.now()
-if "Order" not in eom_df.columns:
-    eom_df["Order"] = range(len(eom_df))
+df = load_projects_data()
+eom_df = load_eom_data()
 
 # =========================
 # HEADER + NAVIGATION
@@ -416,7 +458,7 @@ if st.session_state.section == "Projects":
         
         df = filtered_df
         
-        original_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=['Release Date', 'Due Date'])
+        original_df = load_projects_data()
         st.info(f"📊 Showing {len(df)} of {len(original_df)} tasks")
         st.divider()
 
@@ -473,7 +515,6 @@ if st.session_state.section == "Projects":
             elif not tasks:
                 st.error("❌ Add at least one task!")
             else:
-                # Ricarica i dati freschi prima di aggiungere
                 fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
                 
                 new_rows = []
@@ -518,7 +559,6 @@ if st.session_state.section == "Projects":
         col1, col2 = st.columns(2)
         with col1:
             if st.button("✅ Yes, delete project", key=f"confirm_del_proj_{project}", type="primary"):
-                # Ricarica dati freschi prima di cancellare
                 fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
                 fresh_df = fresh_df[fresh_df["Project"] != project].reset_index(drop=True)
                 
@@ -541,7 +581,6 @@ if st.session_state.section == "Projects":
         task_id = st.session_state.confirm_delete_task
         project_name, task_name = task_id
         
-        # Ricarica dati freschi
         fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
         mask = (fresh_df["Project"] == project_name) & (fresh_df["Task"] == task_name)
         
@@ -563,7 +602,7 @@ if st.session_state.section == "Projects":
             st.stop()
 
     # ======================================================
-    # 📁 PROJECT VIEW (SIMPLIFIED - Continue with existing logic)
+    # 📁 PROJECT VIEW
     # ======================================================
     if not st.session_state.add_project and len(df) > 0:
         in_progress_projects = []
@@ -581,7 +620,6 @@ if st.session_state.section == "Projects":
         in_progress_projects.sort()
         completed_projects.sort()
         
-        # Display projects (keeping existing display logic but improving save operations)
         if in_progress_projects:
             st.markdown("### 📂 In Progress")
             
@@ -640,12 +678,12 @@ if st.session_state.section == "Projects":
                                     placeholder="Add your notes here..."
                                 )
                                 
+                                # OTTIMIZZATO: Salva notes senza rerun
                                 if notes != current_notes:
-                                    # Ricarica e salva
-                                    fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
-                                    fresh_df.loc[idx, "Notes"] = notes
-                                    fresh_df.loc[idx, "Last Update"] = pd.Timestamp.now()
-                                    save_to_gsheet(fresh_df, "Projects")
+                                    df.loc[idx, "Notes"] = notes
+                                    df.loc[idx, "Last Update"] = pd.Timestamp.now()
+                                    save_to_gsheet(df, "Projects")
+                                    st.success("💾 Notes saved", icon="✅")
 
                                 current_status = r["Progress"]
                                 status = st.radio(
@@ -657,7 +695,6 @@ if st.session_state.section == "Projects":
                                 )
                                 
                                 if status != current_status:
-                                    # Ricarica e salva
                                     fresh_df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
                                     fresh_df.loc[idx, "Progress"] = status
                                     fresh_df.loc[idx, "Last Update"] = pd.Timestamp.now()
@@ -772,7 +809,6 @@ if st.session_state.section == "EOM":
             col1, col2 = st.columns([1, 4])
             with col1:
                 if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
-                    # Ricarica dati freschi
                     fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
                     fresh_eom = fresh_eom.drop(selected_to_delete).reset_index(drop=True)
                     
@@ -801,7 +837,6 @@ if st.session_state.section == "EOM":
             if not activity:
                 st.error("❌ Activity name is required!")
             else:
-                # Ricarica dati freschi
                 fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
                 
                 next_order = fresh_eom["Order"].max() + 1 if len(fresh_eom) > 0 else 0
