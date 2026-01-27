@@ -325,11 +325,11 @@ if "show_old_months" not in st.session_state:
     st.session_state.show_old_months = False
 if "selected_old_months" not in st.session_state:
     st.session_state.selected_old_months = []
-# ✅ NEW: Session state per il dialog delle descrizioni
-if "eom_detail_activity" not in st.session_state:
-    st.session_state.eom_detail_activity = None
-if "eom_detail_edit_mode" not in st.session_state:
-    st.session_state.eom_detail_edit_mode = False
+# ✅ NEW: Session state per il click sulla riga
+if "selected_activity_row" not in st.session_state:
+    st.session_state.selected_activity_row = None
+if "description_edit_mode" not in st.session_state:
+    st.session_state.description_edit_mode = False
 
 # =========================
 # HELPERS
@@ -1418,7 +1418,7 @@ if st.session_state.section == "EOM":
         st.divider()
 
     # ======================================================
-    # ✅ VIEW MODE CON TABELLA STATUS SOPRA + EXPANDER RAGGRUPATI PER AREA/MACRO
+    # ✅ VIEW MODE CON CLICK-TO-VIEW DESCRIPTION
     # ======================================================
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
@@ -1464,9 +1464,9 @@ if st.session_state.section == "EOM":
         if 'eom_view_snapshot' not in st.session_state:
             st.session_state.eom_view_snapshot = display_df_renamed.copy()
 
-        # ✅ TABELLA STATUS (SOPRA)
+        # ✅ TABELLA STATUS CON SELEZIONE RIGA
         st.markdown("### 📊 Status Table")
-        st.caption("💡 **Tip**: Click on activities below to view/edit descriptions")
+        st.caption("💡 **Tip**: Click on a row to view/edit the activity description")
 
         edited = st.data_editor(
             display_df_renamed,
@@ -1475,8 +1475,94 @@ if st.session_state.section == "EOM":
             column_config=column_config,
             hide_index=True,
             key="eom_editor",
-            disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
+            disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"],
+            on_select="rerun",
+            selection_mode="single-row"
         )
+
+        # ✅ GESTIONE SELEZIONE RIGA
+        selected_rows = st.session_state.get("eom_editor", {}).get("selection", {}).get("rows", [])
+        
+        if len(selected_rows) > 0:
+            selected_idx = selected_rows[0]
+            selected_activity = eom_view_df.iloc[selected_idx]["Activity"]
+            selected_area = eom_view_df.iloc[selected_idx]["Area"]
+            selected_macro = eom_view_df.iloc[selected_idx]["ID Macro"]
+            selected_micro = eom_view_df.iloc[selected_idx]["ID Micro"]
+            
+            st.divider()
+            
+            # ✅ BOX DESCRIZIONE ATTIVITÀ SELEZIONATA
+            st.markdown(f"### 📝 Description for: **{selected_activity}**")
+            st.caption(f"📍 {selected_area} - {selected_macro}/{selected_micro}")
+            
+            # Carica descrizione
+            current_description = get_activity_description(selected_activity, eom_descriptions_df)
+            has_description = len(current_description.strip()) > 0
+            
+            # Toggle Edit Mode
+            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 6])
+            with col_btn1:
+                if st.button("✏️ Edit" if not st.session_state.description_edit_mode else "👁️ View", 
+                            use_container_width=True):
+                    st.session_state.description_edit_mode = not st.session_state.description_edit_mode
+                    st.rerun()
+            
+            with col_btn2:
+                if st.button("❌ Close", use_container_width=True):
+                    st.session_state.description_edit_mode = False
+                    st.rerun()
+            
+            st.divider()
+            
+            if st.session_state.description_edit_mode:
+                # EDIT MODE
+                st.markdown("#### ✏️ Edit Description")
+                
+                new_description = st.text_area(
+                    "Description",
+                    value=current_description,
+                    height=400,
+                    key="desc_editor_main",
+                    help="Write the activity description here. Supports markdown formatting."
+                )
+                
+                st.markdown("##### 💡 Tips:")
+                st.markdown("""
+                - Use **markdown** for formatting (bold, italic, lists, etc.)
+                - Add step-by-step instructions
+                - Include links to relevant documents
+                - Mention important notes or warnings
+                """)
+                
+                col_save, col_cancel = st.columns(2)
+                with col_save:
+                    if st.button("💾 Save Description", type="primary", key="btn_save_main", use_container_width=True):
+                        # Ricarica descrizioni fresche
+                        fresh_descriptions = load_from_gsheet("EOM_Descriptions", EOM_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
+                        if len(fresh_descriptions) == 0:
+                            fresh_descriptions = pd.DataFrame(columns=EOM_DESCRIPTIONS_COLUMNS)
+                        
+                        if save_activity_description(selected_activity, new_description, fresh_descriptions):
+                            st.success("✅ Description saved successfully!")
+                            st.session_state.description_edit_mode = False
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error("❌ Failed to save description")
+                
+                with col_cancel:
+                    if st.button("❌ Discard Changes", key="btn_discard_main", use_container_width=True):
+                        st.session_state.description_edit_mode = False
+                        st.rerun()
+            
+            else:
+                # VIEW MODE
+                if has_description:
+                    st.markdown("#### 📄 Description")
+                    st.markdown(current_description)
+                else:
+                    st.info("📝 No description available yet. Click '✏️ Edit' to add one.")
 
         # ✅ SALVATAGGIO SEMPLIFICATO - Confronta solo se veramente diverso
         changes_detected = False
@@ -1520,123 +1606,6 @@ if st.session_state.section == "EOM":
                 st.session_state.eom_view_snapshot = edited.copy()
                 time.sleep(0.3)
                 st.rerun()
-
-        st.divider()
-
-        # ======================================================
-        # ✅ EXPANDER RAGGRUPATI PER AREA → ID MACRO → SINGOLE ATTIVITÀ
-        # ======================================================
-        st.markdown("### 📋 Activity Descriptions")
-        
-        # Raggruppa per Area
-        areas_grouped = eom_view_df.groupby("Area")
-        
-        for area_name, area_df in areas_grouped:
-            # Conta attività con/senza descrizione per questa area
-            area_activities = area_df["Activity"].tolist()
-            area_with_desc = sum([1 for act in area_activities if len(get_activity_description(act, eom_descriptions_df).strip()) > 0])
-            area_total = len(area_activities)
-            
-            # Expander per Area
-            area_icon = "📁" if area_with_desc == area_total else "📂"
-            area_header = f"{area_icon} {area_name} ({area_with_desc}/{area_total} with descriptions)"
-            
-            with st.expander(area_header, expanded=False):
-                # Raggruppa per ID Macro dentro questa Area
-                macro_grouped = area_df.groupby("ID Macro")
-                
-                for macro_id, macro_df in macro_grouped:
-                    # Conta attività con/senza descrizione per questo macro
-                    macro_activities = macro_df["Activity"].tolist()
-                    macro_with_desc = sum([1 for act in macro_activities if len(get_activity_description(act, eom_descriptions_df).strip()) > 0])
-                    macro_total = len(macro_activities)
-                    
-                    # Expander per ID Macro
-                    macro_icon = "📌" if macro_with_desc == macro_total else "📍"
-                    macro_header = f"{macro_icon} ID Macro {macro_id} ({macro_with_desc}/{macro_total} with descriptions)"
-                    
-                    with st.expander(macro_header, expanded=False):
-                        # Singole attività
-                        for idx, row in macro_df.iterrows():
-                            activity_name = row["Activity"]
-                            id_micro = row["ID Micro"]
-                            
-                            # Carica descrizione
-                            current_description = get_activity_description(activity_name, eom_descriptions_df)
-                            has_description = len(current_description.strip()) > 0
-                            
-                            # Icona basata su presenza descrizione
-                            icon = "📝" if has_description else "📄"
-                            activity_header = f"{icon} {activity_name} ({id_micro})"
-                            
-                            with st.expander(activity_header, expanded=False):
-                                # Inizializza edit mode per questa specifica attività
-                                edit_key = f"edit_desc_{idx}"
-                                if edit_key not in st.session_state:
-                                    st.session_state[edit_key] = False
-                                
-                                # Pulsanti Edit/Cancel
-                                col1, col2 = st.columns([6, 1])
-                                with col2:
-                                    if not st.session_state[edit_key]:
-                                        if st.button("✏️ Edit", key=f"btn_edit_{idx}", use_container_width=True):
-                                            st.session_state[edit_key] = True
-                                            st.rerun()
-                                    else:
-                                        if st.button("❌ Cancel", key=f"btn_cancel_{idx}", use_container_width=True):
-                                            st.session_state[edit_key] = False
-                                            st.rerun()
-                                
-                                st.divider()
-                                
-                                if st.session_state[edit_key]:
-                                    # EDIT MODE
-                                    st.markdown("#### ✏️ Edit Description")
-                                    
-                                    new_description = st.text_area(
-                                        "Description",
-                                        value=current_description,
-                                        height=300,
-                                        key=f"desc_editor_{idx}",
-                                        help="Write the activity description here. Supports markdown formatting."
-                                    )
-                                    
-                                    st.markdown("##### 💡 Tips:")
-                                    st.markdown("""
-                                    - Use **markdown** for formatting (bold, italic, lists, etc.)
-                                    - Add step-by-step instructions
-                                    - Include links to relevant documents
-                                    - Mention important notes or warnings
-                                    """)
-                                    
-                                    col_save, col_cancel = st.columns(2)
-                                    with col_save:
-                                        if st.button("💾 Save Description", type="primary", key=f"btn_save_{idx}", use_container_width=True):
-                                            # Ricarica descrizioni fresche
-                                            fresh_descriptions = load_from_gsheet("EOM_Descriptions", EOM_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
-                                            if len(fresh_descriptions) == 0:
-                                                fresh_descriptions = pd.DataFrame(columns=EOM_DESCRIPTIONS_COLUMNS)
-                                            
-                                            if save_activity_description(activity_name, new_description, fresh_descriptions):
-                                                st.success("✅ Description saved successfully!")
-                                                st.session_state[edit_key] = False
-                                                time.sleep(1)
-                                                st.rerun()
-                                            else:
-                                                st.error("❌ Failed to save description")
-                                    
-                                    with col_cancel:
-                                        if st.button("❌ Discard Changes", key=f"btn_discard_{idx}", use_container_width=True):
-                                            st.session_state[edit_key] = False
-                                            st.rerun()
-                                
-                                else:
-                                    # VIEW MODE
-                                    if has_description:
-                                        st.markdown("#### 📄 Description")
-                                        st.markdown(current_description)
-                                    else:
-                                        st.info("📝 No description available yet. Click '✏️ Edit' to add one.")
 
         st.divider()
 
