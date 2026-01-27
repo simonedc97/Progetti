@@ -1524,13 +1524,15 @@ if st.session_state.section == "EOM":
             col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 6])
             with col_btn1:
                 if st.button("✏️ Edit" if not st.session_state.description_edit_mode else "👁️ View", 
-                            use_container_width=True):
+                            use_container_width=True,
+                            key="toggle_edit_mode_btn"):
                     st.session_state.description_edit_mode = not st.session_state.description_edit_mode
                     st.rerun()
             
             with col_btn2:
-                if st.button("❌ Close", use_container_width=True):
+                if st.button("❌ Close", use_container_width=True, key="close_description_btn"):
                     st.session_state.description_edit_mode = False
+                    st.session_state.activity_selector = "Select an activity..."
                     st.rerun()
             
             st.divider()
@@ -1557,7 +1559,7 @@ if st.session_state.section == "EOM":
                 
                 col_save, col_cancel = st.columns(2)
                 with col_save:
-                    if st.button("💾 Save Description", type="primary", key="btn_save_main", use_container_width=True):
+                    if st.button("💾 Save Description", type="primary", key="save_desc_btn", use_container_width=True):
                         # Ricarica descrizioni fresche
                         fresh_descriptions = load_from_gsheet("EOM_Descriptions", EOM_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
                         if len(fresh_descriptions) == 0:
@@ -1572,7 +1574,7 @@ if st.session_state.section == "EOM":
                             st.error("❌ Failed to save description")
                 
                 with col_cancel:
-                    if st.button("❌ Discard Changes", key="btn_discard_main", use_container_width=True):
+                    if st.button("❌ Discard Changes", key="discard_desc_btn", use_container_width=True):
                         st.session_state.description_edit_mode = False
                         st.rerun()
             
