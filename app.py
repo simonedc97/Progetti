@@ -1481,7 +1481,6 @@ if st.session_state.section == "EOM":
             st.write("")  # spacer
             st.write("")  # spacer
             if st.button("🔄 Clear", use_container_width=True, key="clear_selection"):
-                st.session_state.activity_selector = "Select an activity..."
                 st.session_state.description_edit_mode = False
                 st.rerun()
 
@@ -1532,7 +1531,6 @@ if st.session_state.section == "EOM":
             with col_btn2:
                 if st.button("❌ Close", use_container_width=True, key="close_description_btn"):
                     st.session_state.description_edit_mode = False
-                    st.session_state.activity_selector = "Select an activity..."
                     st.rerun()
             
             st.divider()
