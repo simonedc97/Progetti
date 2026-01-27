@@ -1468,21 +1468,13 @@ if st.session_state.section == "EOM":
         st.markdown("### 📊 Status Table")
         
         # ✅ Selectbox per scegliere l'attività da visualizzare/modificare
-        col_select, col_clear = st.columns([5, 1])
-        with col_select:
-            activity_options = ["Select an activity..."] + eom_view_df["Activity"].tolist()
-            selected_activity_name = st.selectbox(
-                "📝 View/Edit Description for:",
-                options=activity_options,
-                index=0,
-                key="activity_selector"
-            )
-        with col_clear:
-            st.write("")  # spacer
-            st.write("")  # spacer
-            if st.button("🔄 Clear", use_container_width=True, key="clear_selection"):
-                st.session_state.description_edit_mode = False
-                st.rerun()
+        activity_options = ["Select an activity..."] + eom_view_df["Activity"].tolist()
+        selected_activity_name = st.selectbox(
+            "📝 View/Edit Description for:",
+            options=activity_options,
+            index=0,
+            key="activity_selector"
+        )
 
         edited = st.data_editor(
             display_df_renamed,
@@ -1520,18 +1512,11 @@ if st.session_state.section == "EOM":
             has_description = len(current_description.strip()) > 0
             
             # Toggle Edit Mode
-            col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 6])
-            with col_btn1:
-                if st.button("✏️ Edit" if not st.session_state.description_edit_mode else "👁️ View", 
-                            use_container_width=True,
-                            key="toggle_edit_mode_btn"):
-                    st.session_state.description_edit_mode = not st.session_state.description_edit_mode
-                    st.rerun()
-            
-            with col_btn2:
-                if st.button("❌ Close", use_container_width=True, key="close_description_btn"):
-                    st.session_state.description_edit_mode = False
-                    st.rerun()
+            if st.button("✏️ Edit Description" if not st.session_state.description_edit_mode else "👁️ View Description", 
+                        use_container_width=False,
+                        key="toggle_edit_mode_btn"):
+                st.session_state.description_edit_mode = not st.session_state.description_edit_mode
+                st.rerun()
             
             st.divider()
             
