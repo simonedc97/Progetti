@@ -1468,13 +1468,28 @@ if st.session_state.section == "EOM":
         st.markdown("### 📊 Status Table")
         
         # ✅ Selectbox per scegliere l'attività da visualizzare/modificare
-        activity_options = ["Select an activity..."] + eom_view_df["Activity"].tolist()
-        selected_activity_name = st.selectbox(
+        # Crea lista con formato "Area - ID Micro - Activity"
+        activity_display_list = []
+        activity_mapping = {}  # Mappa display -> nome attività reale
+        
+        for idx, row in eom_view_df.iterrows():
+            area = row["Area"]
+            id_micro = row["ID Micro"]
+            activity = row["Activity"]
+            display_text = f"{area} - {id_micro} - {activity}"
+            activity_display_list.append(display_text)
+            activity_mapping[display_text] = activity
+        
+        activity_options = ["Select an activity..."] + activity_display_list
+        selected_display = st.selectbox(
             "📝 View/Edit Description for:",
             options=activity_options,
             index=0,
             key="activity_selector"
         )
+        
+        # Recupera il nome reale dell'attività
+        selected_activity_name = activity_mapping.get(selected_display, None)
 
         edited = st.data_editor(
             display_df_renamed,
@@ -1488,7 +1503,7 @@ if st.session_state.section == "EOM":
 
         # ✅ GESTIONE SELEZIONE ATTIVITÀ
         selected_rows = []
-        if selected_activity_name != "Select an activity...":
+        if selected_activity_name is not None:
             # Trova l'indice dell'attività selezionata
             selected_rows = eom_view_df[eom_view_df["Activity"] == selected_activity_name].index.tolist()
             if len(selected_rows) > 0:
