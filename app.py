@@ -1466,7 +1466,24 @@ if st.session_state.section == "EOM":
 
         # ✅ TABELLA STATUS CON SELEZIONE RIGA
         st.markdown("### 📊 Status Table")
-        st.caption("💡 **Tip**: Click on a row to view/edit the activity description")
+        
+        # ✅ Selectbox per scegliere l'attività da visualizzare/modificare
+        col_select, col_clear = st.columns([5, 1])
+        with col_select:
+            activity_options = ["Select an activity..."] + eom_view_df["Activity"].tolist()
+            selected_activity_name = st.selectbox(
+                "📝 View/Edit Description for:",
+                options=activity_options,
+                index=0,
+                key="activity_selector"
+            )
+        with col_clear:
+            st.write("")  # spacer
+            st.write("")  # spacer
+            if st.button("🔄 Clear", use_container_width=True, key="clear_selection"):
+                st.session_state.activity_selector = "Select an activity..."
+                st.session_state.description_edit_mode = False
+                st.rerun()
 
         edited = st.data_editor(
             display_df_renamed,
@@ -1475,13 +1492,16 @@ if st.session_state.section == "EOM":
             column_config=column_config,
             hide_index=True,
             key="eom_editor",
-            disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"],
-            on_select="rerun",
-            selection_mode="single-row"
+            disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
         )
 
-        # ✅ GESTIONE SELEZIONE RIGA
-        selected_rows = st.session_state.get("eom_editor", {}).get("selection", {}).get("rows", [])
+        # ✅ GESTIONE SELEZIONE ATTIVITÀ
+        selected_rows = []
+        if selected_activity_name != "Select an activity...":
+            # Trova l'indice dell'attività selezionata
+            selected_rows = eom_view_df[eom_view_df["Activity"] == selected_activity_name].index.tolist()
+            if len(selected_rows) > 0:
+                selected_rows = [selected_rows[0]]
         
         if len(selected_rows) > 0:
             selected_idx = selected_rows[0]
