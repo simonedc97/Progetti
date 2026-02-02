@@ -357,6 +357,43 @@ def parse_id(id_str):
         except:
             return None, None
 
+# ✅ NEW: EOM sort by Macro ID then Micro ID (e.g., 7, 7.1, 7.2...)
+def sort_eom_by_ids(df):
+    """
+    Ordina le attività EOM per ID Macro (numerico) e poi per ID Micro (numerico),
+    mettendo la riga macro (senza micro) prima delle micro.
+    Mantiene stabilità con Order come tie-break.
+    """
+    if df is None or len(df) == 0:
+        return df
+
+    d = df.copy()
+
+    def _macro_key(x):
+        try:
+            m, _ = parse_id(x)
+            return m if m is not None else 10**9
+        except:
+            return 10**9
+
+    def _micro_key(x):
+        # ID Micro può essere "7.2" oppure vuoto. Vogliamo: None -> 0 (prima), poi 1,2,3...
+        try:
+            _, micro = parse_id(x)
+            return micro if micro is not None else 0
+        except:
+            return 0
+
+    d["_macro_sort"] = d["ID Macro"].apply(_macro_key) if "ID Macro" in d.columns else 10**9
+    d["_micro_sort"] = d["ID Micro"].apply(_micro_key) if "ID Micro" in d.columns else 0
+
+    if "Order" not in d.columns:
+        d["Order"] = range(len(d))
+
+    d = d.sort_values(by=["_macro_sort", "_micro_sort", "Order"], ascending=[True, True, True]).reset_index(drop=True)
+    d = d.drop(columns=["_macro_sort", "_micro_sort"], errors="ignore")
+    return d
+
 def renumber_eom_ids(df):
     """Rinumera automaticamente gli ID Macro e Micro del DataFrame EOM"""
     if len(df) == 0:
@@ -708,6 +745,25 @@ if st.session_state.section == "Projects":
     # ======================================================
     if st.session_state.add_project:
         st.subheader("➕ New Project")
+
+        # ✅ NEW: Area dropdown (existing) + still editable
+        existing_project_areas = []
+        try:
+            existing_project_areas = sorted(load_projects_data()["Area"].dropna().astype(str).unique().tolist())
+        except:
+            existing_project_areas = []
+
+        selected_area_pick = st.selectbox(
+            "Select existing Area (optional)",
+            options=[""] + existing_project_areas,
+            index=0,
+            key="projects_area_picker"
+        )
+
+        # Prefill the existing text_input ("Area") without changing its line
+        if selected_area_pick:
+            # TextInput without explicit key uses label as key
+            st.session_state["Area"] = selected_area_pick
 
         area = st.text_input("Area")
         project = st.text_input("Project name")
@@ -1238,6 +1294,9 @@ if st.session_state.section == "EOM":
     if st.session_state.eom_bulk_delete and len(eom_df) > 0:
         st.warning("🗑️ **Delete Mode**: Select activities to delete")
 
+        # ✅ NEW: Show delete list ordered by Macro/Micro
+        eom_df = sort_eom_by_ids(eom_df)
+
         selected_to_delete = []
         for idx, row in eom_df.iterrows():
             col1, col2 = st.columns([1, 10])
@@ -1273,7 +1332,72 @@ if st.session_state.section == "EOM":
 
     with st.expander("➕ Add new End-of-Month Activity", expanded=False):
         c1, c2, c3 = st.columns(3)
+
+        # ✅ NEW: Area dropdown (existing) + still editable
+        existing_eom_areas = sorted([x for x in eom_df["Area"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+        picked_eom_area = c1.selectbox(
+            "Select existing Area (optional)",
+            options=[""] + existing_eom_areas,
+            index=0,
+            key="eom_area_picker"
+        )
+        if picked_eom_area:
+            st.session_state["eom_area"] = picked_eom_area
+
         area = c1.text_input("Area", key="eom_area")
+
+        # ✅ NEW: Autofill Macro/Micro based on existing Area
+        area_clean = (area or "").strip()
+        if area_clean:
+            existing_in_area = eom_df[eom_df["Area"].astype(str).str.strip() == area_clean].copy()
+
+            if len(existing_in_area) > 0:
+                # Default Macro: più frequente
+                macro_candidates = existing_in_area["ID Macro"].dropna().astype(str).str.strip()
+                macro_candidates = [m for m in macro_candidates.tolist() if m != ""]
+                default_macro = None
+                if len(macro_candidates) > 0:
+                    try:
+                        from collections import Counter
+                        cnt = Counter(macro_candidates)
+                        most_common = cnt.most_common()
+                        top_freq = most_common[0][1]
+                        top_macros = [m for m, f in most_common if f == top_freq]
+                        try:
+                            top_macros_sorted = sorted(top_macros, key=lambda x: int(str(x).split(".")[0]))
+                            default_macro = top_macros_sorted[0]
+                        except:
+                            default_macro = top_macros[0]
+                    except:
+                        default_macro = macro_candidates[0]
+
+                if default_macro and not str(st.session_state.get("eom_macro", "")).strip():
+                    st.session_state["eom_macro"] = str(default_macro)
+
+                # Default Micro: successivo (es. 7.4 -> 7.5)
+                macro_for_micro = str(st.session_state.get("eom_macro", "")).strip() or (str(default_macro).strip() if default_macro else "")
+                if macro_for_micro:
+                    # prendi solo micro dello stesso macro (se esistono)
+                    tmp = existing_in_area.copy()
+                    tmp["__micro_num"] = tmp["ID Micro"].apply(lambda x: parse_id(x)[1] if parse_id(x)[0] is not None else None)
+                    tmp["__macro_num_from_micro"] = tmp["ID Micro"].apply(lambda x: parse_id(x)[0])
+                    try:
+                        macro_num = int(str(macro_for_micro).split(".")[0])
+                    except:
+                        macro_num = None
+
+                    if macro_num is not None:
+                        tmp_same_macro = tmp[tmp["__macro_num_from_micro"] == macro_num]
+                        existing_micros = tmp_same_macro["__micro_num"].dropna().tolist()
+                        if len(existing_micros) > 0:
+                            next_micro = int(max(existing_micros)) + 1
+                        else:
+                            # se non ci sono micro, proponi .1
+                            next_micro = 1
+
+                        if not str(st.session_state.get("eom_micro", "")).strip():
+                            st.session_state["eom_micro"] = f"{macro_num}.{next_micro}"
+
         id_macro = c2.text_input("ID Macro (e.g., 1, 2, 3)", key="eom_macro")
         id_micro = c3.text_input("ID Micro (e.g., 1.1, 1.2, 2.1)", key="eom_micro")
 
@@ -1319,6 +1443,9 @@ if st.session_state.section == "EOM":
     # ======================================================
     if st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
+
+        # ✅ NEW: Order by Macro/Micro IDs
+        eom_view_df = sort_eom_by_ids(eom_view_df)
 
         # ✅ Mostra mesi visibili + mesi vecchi selezionati
         display_month_cols = visible_month_cols.copy()
@@ -1422,6 +1549,9 @@ if st.session_state.section == "EOM":
     # ======================================================
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
+
+        # ✅ NEW: Order by Macro/Micro IDs
+        eom_view_df = sort_eom_by_ids(eom_view_df)
 
         # ✅ Mostra mesi visibili + mesi vecchi selezionati
         display_month_cols = visible_month_cols.copy()
