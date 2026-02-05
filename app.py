@@ -31,6 +31,21 @@ EOM_DESCRIPTIONS_COLUMNS = [
 ]
 
 # =========================
+# ✅ NEW: AD HOC ACTIVITIES (non ricorrenti)
+# =========================
+ADHOC_SHEET_NAME = "AdHoc"
+ADHOC_COLUMNS = [
+    "Area", "ID",
+    "Activity", "Owner",
+    "Status",
+    "Last Done",
+    "Notes",
+    "🗑️ Delete",
+    "Last Update",
+    "Order"
+]
+
+# =========================
 # ✅ NEW: EOM STATUS DOTS (white default + gray/green/red)
 # =========================
 EOM_WHITE = "⚪"   # default / not answered
@@ -283,6 +298,44 @@ def load_eom_descriptions():
         return empty_df
 
 # =========================
+# ✅ NEW: LOAD AD HOC DATA
+# =========================
+@st.cache_data(ttl=30)
+def load_adhoc_data():
+    """Carica dati AdHoc con cache"""
+    try:
+        create_sheet_if_not_exists(ADHOC_SHEET_NAME, ADHOC_COLUMNS)
+    except:
+        pass
+
+    df = load_from_gsheet(
+        ADHOC_SHEET_NAME,
+        ADHOC_COLUMNS,
+        date_cols=["Last Done", "Last Update"]
+    )
+
+    if "Order" not in df.columns:
+        df["Order"] = range(len(df))
+    if "Last Update" not in df.columns:
+        df["Last Update"] = pd.Timestamp.now()
+    if "Status" not in df.columns:
+        df["Status"] = EOM_WHITE
+    if "🗑️ Delete" not in df.columns:
+        df["🗑️ Delete"] = False
+
+    df["Status"] = df["Status"].fillna(EOM_WHITE).replace("", EOM_WHITE)
+    df["Status"] = df["Status"].apply(lambda x: x if str(x).strip() in EOM_STATUS_OPTIONS else EOM_WHITE)
+
+    for c in ["Area", "ID", "Activity", "Owner", "Notes"]:
+        if c in df.columns:
+            df[c] = df[c].fillna("").astype(str)
+
+    df["🗑️ Delete"] = df["🗑️ Delete"].apply(lambda x: True if str(x).lower() in ['true', '1', 'yes'] else False)
+    df["Order"] = pd.to_numeric(df["Order"], errors="coerce").fillna(0).astype(int)
+
+    return df
+
+# =========================
 # SESSION STATE
 # =========================
 if "section" not in st.session_state:
@@ -330,6 +383,18 @@ if "selected_activity_row" not in st.session_state:
     st.session_state.selected_activity_row = None
 if "description_edit_mode" not in st.session_state:
     st.session_state.description_edit_mode = False
+
+# =========================
+# ✅ NEW: SESSION STATE ADHOC
+# =========================
+if "adhoc_edit_mode" not in st.session_state:
+    st.session_state.adhoc_edit_mode = False
+if "adhoc_bulk_delete" not in st.session_state:
+    st.session_state.adhoc_bulk_delete = False
+if "show_adhoc_filters" not in st.session_state:
+    st.session_state.show_adhoc_filters = False
+if "reset_adhoc_filters_flag" not in st.session_state:
+    st.session_state.reset_adhoc_filters_flag = 0
 
 # =========================
 # HELPERS
@@ -599,6 +664,7 @@ def save_activity_description(activity_name, description, descriptions_df):
 df = load_projects_data()
 eom_df = load_eom_data()
 eom_descriptions_df = load_eom_descriptions()
+adhoc_df = load_adhoc_data()
 
 # =========================
 # HEADER + NAVIGATION
@@ -615,6 +681,14 @@ with nav2:
     if st.button("📅 End of Month Activities", use_container_width=True,
                  type="primary" if st.session_state.section == "EOM" else "secondary"):
         st.session_state.section = "EOM"
+        st.rerun()
+
+# ✅ NEW: terzo pulsante senza modificare i due sopra
+nav3a, nav3b = st.columns([1, 1])
+with nav3a:
+    if st.button("🧩 Ad Hoc Activities", use_container_width=True,
+                 type="primary" if st.session_state.section == "AdHoc" else "secondary"):
+        st.session_state.section = "AdHoc"
         st.rerun()
 
 st.divider()
@@ -1792,4 +1866,378 @@ if st.session_state.section == "EOM":
             total_todo = len(eom_df)
             completed_current_month = 0
 
-        st.caption(f"📊 Total activities: {len(eom_df)} | Current month completed: {completed_current_month}/{total_todo}")
+        st.caption(f"📊 Total activities: {len(eom_df)} | Current month completed: {completed_current_month}/{total_todo}")  
+
+# ======================================================
+# 🧩 AD HOC ACTIVITIES (NEW SECTION)
+# ======================================================
+if st.session_state.section == "AdHoc":
+
+    st.subheader("🧩 Ad Hoc Activities")
+
+    if len(adhoc_df) > 0 and "Last Update" in adhoc_df.columns:
+        try:
+            last_update_adhoc = pd.to_datetime(adhoc_df["Last Update"]).max()
+            st.caption(f"🕒 Last update: {last_update_adhoc.strftime('%d/%m/%Y %H:%M')}")
+        except:
+            st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
+
+    adhoc_full_df = adhoc_df.copy()
+    adhoc_view_df = adhoc_df.copy()
+
+    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+    with col1:
+        st.caption("📌 Activities without fixed recurrence (track status + last done datetime)")
+    with col2:
+        if st.button("🔍 Filters" if not st.session_state.show_adhoc_filters else "🔍 Hide",
+                     use_container_width=True, key="adhoc_filters_btn"):
+            st.session_state.show_adhoc_filters = not st.session_state.show_adhoc_filters
+            st.rerun()
+    with col3:
+        if st.button("✏️ Edit" if not st.session_state.adhoc_edit_mode else "✅ View",
+                     use_container_width=True, key="adhoc_edit_btn"):
+            st.session_state.adhoc_edit_mode = not st.session_state.adhoc_edit_mode
+            st.rerun()
+    with col4:
+        if st.button("🗑️ Delete" if not st.session_state.adhoc_bulk_delete else "❌ Cancel",
+                     use_container_width=True, key="adhoc_delete_btn"):
+            st.session_state.adhoc_bulk_delete = not st.session_state.adhoc_bulk_delete
+            st.rerun()
+
+    st.divider()
+
+    # ======================================================
+    # ADHOC FILTERS
+    # ======================================================
+    if st.session_state.show_adhoc_filters and len(adhoc_full_df) > 0:
+        with st.expander("🔍 Filters (Ad Hoc)", expanded=True):
+            f1, f2, f3, f4 = st.columns(4)
+
+            with f1:
+                areas = ["All"] + sorted([x for x in adhoc_full_df["Area"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+                adhoc_selected_area = st.selectbox(
+                    "Area",
+                    areas,
+                    index=0,
+                    key=f"adhoc_filter_area_{st.session_state.reset_adhoc_filters_flag}"
+                )
+
+            with f2:
+                owners = ["All"] + sorted([x for x in adhoc_full_df["Owner"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+                adhoc_selected_owner = st.selectbox(
+                    "Owner",
+                    owners,
+                    index=0,
+                    key=f"adhoc_filter_owner_{st.session_state.reset_adhoc_filters_flag}"
+                )
+
+            with f3:
+                status_vals = ["All"] + EOM_STATUS_OPTIONS
+                adhoc_selected_status = st.selectbox(
+                    "Status",
+                    status_vals,
+                    index=0,
+                    key=f"adhoc_filter_status_{st.session_state.reset_adhoc_filters_flag}"
+                )
+
+            with f4:
+                adhoc_search = st.text_input(
+                    "Search in Activity / Notes",
+                    value="",
+                    key=f"adhoc_filter_search_{st.session_state.reset_adhoc_filters_flag}"
+                )
+
+            r1, r2 = st.columns([1, 3])
+            with r1:
+                if st.button("🔄 Reset Filters", use_container_width=True, key="adhoc_reset_filters"):
+                    st.session_state.reset_adhoc_filters_flag += 1
+                    st.rerun()
+
+        adhoc_view_df = adhoc_full_df.copy()
+
+        if adhoc_selected_area != "All":
+            adhoc_view_df = adhoc_view_df[adhoc_view_df["Area"] == adhoc_selected_area]
+
+        if adhoc_selected_owner != "All":
+            adhoc_view_df = adhoc_view_df[adhoc_view_df["Owner"] == adhoc_selected_owner]
+
+        if adhoc_selected_status != "All":
+            adhoc_view_df = adhoc_view_df[adhoc_view_df["Status"] == adhoc_selected_status]
+
+        if adhoc_search and adhoc_search.strip():
+            pattern = re.escape(adhoc_search.strip())
+            adhoc_view_df = adhoc_view_df[
+                adhoc_view_df["Activity"].astype(str).str.contains(pattern, case=False, na=False) |
+                adhoc_view_df["Notes"].astype(str).str.contains(pattern, case=False, na=False)
+            ]
+
+        st.info(f"📊 Showing {len(adhoc_view_df)} of {len(adhoc_full_df)} activities")
+        st.divider()
+
+    # ======================================================
+    # BULK DELETE MODE
+    # ======================================================
+    if st.session_state.adhoc_bulk_delete and len(adhoc_view_df) > 0:
+        st.warning("🗑️ **Delete Mode**: Select activities to delete")
+
+        adhoc_view_df = adhoc_view_df.sort_values("Order").reset_index(drop=True)
+
+        selected_to_delete_orders = []
+        for idx, row in adhoc_view_df.iterrows():
+            c1, c2 = st.columns([1, 10])
+            with c1:
+                if st.checkbox("", key=f"adhoc_bulk_select_{idx}"):
+                    selected_to_delete_orders.append(int(row["Order"]))
+            with c2:
+                st.write(f"**{row['Activity']}** ({row['Area']} - ID: {row['ID']})")
+
+        st.divider()
+
+        if selected_to_delete_orders:
+            colA, colB = st.columns([1, 4])
+            with colA:
+                if st.button(f"🗑️ Delete {len(selected_to_delete_orders)} selected", type="primary", key="adhoc_confirm_bulk_delete"):
+                    fresh = load_from_gsheet(ADHOC_SHEET_NAME, ADHOC_COLUMNS, date_cols=["Last Done", "Last Update"])
+
+                    # elimina per Order (chiave stabile)
+                    fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
+                    fresh = fresh[~fresh["Order"].isin(selected_to_delete_orders)].reset_index(drop=True)
+
+                    # ricompatta Order
+                    fresh = fresh.sort_values("Order").reset_index(drop=True)
+                    fresh["Order"] = range(len(fresh))
+                    fresh["Last Update"] = pd.Timestamp.now()
+
+                    if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
+                        st.session_state.adhoc_bulk_delete = False
+                        time.sleep(0.5)
+                        st.rerun()
+        else:
+            st.info("👆 Select activities above to delete them")
+
+        st.divider()
+
+    # ======================================================
+    # ADD NEW ADHOC ACTIVITY
+    # ======================================================
+    with st.expander("➕ Add new Ad Hoc Activity", expanded=False):
+        c1, c2, c3 = st.columns(3)
+
+        existing_areas = sorted([x for x in adhoc_full_df["Area"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+        picked_area = c1.selectbox("Select existing Area (optional)", options=[""] + existing_areas, index=0, key="adhoc_area_picker")
+        if picked_area:
+            st.session_state["adhoc_area"] = picked_area
+
+        area = c1.text_input("Area", key="adhoc_area")
+        adhoc_id = c2.text_input("ID (free)", key="adhoc_id")
+        owner = c3.text_input("Owner (optional)", key="adhoc_owner")
+
+        activity = st.text_input("Activity", key="adhoc_activity")
+        notes = st.text_area("Notes (optional)", key="adhoc_notes", height=100)
+
+        c4, c5 = st.columns(2)
+        status = c4.selectbox("Status", options=EOM_STATUS_OPTIONS, index=0, key="adhoc_status")
+        last_done = c5.text_input("Last Done (optional, e.g. 2026-02-05 10:30)", key="adhoc_last_done")
+
+        if st.button("➕ Add activity", type="primary", key="adhoc_add_btn"):
+            if not activity:
+                st.error("❌ Activity name is required!")
+            else:
+                fresh = load_from_gsheet(ADHOC_SHEET_NAME, ADHOC_COLUMNS, date_cols=["Last Done", "Last Update"])
+                if "Order" not in fresh.columns:
+                    fresh["Order"] = range(len(fresh))
+                fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
+
+                next_order = int(fresh["Order"].max() + 1) if len(fresh) > 0 else 0
+
+                # prova parse last_done
+                parsed_last_done = pd.to_datetime(last_done, errors="coerce") if last_done else pd.NaT
+
+                row = {
+                    "Area": area,
+                    "ID": adhoc_id,
+                    "Activity": activity,
+                    "Owner": owner,
+                    "Status": status if status in EOM_STATUS_OPTIONS else EOM_WHITE,
+                    "Last Done": parsed_last_done,
+                    "Notes": notes,
+                    "🗑️ Delete": False,
+                    "Last Update": pd.Timestamp.now(),
+                    "Order": next_order
+                }
+
+                fresh = pd.concat([fresh, pd.DataFrame([row])], ignore_index=True)
+                if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
+                    time.sleep(0.5)
+                    st.rerun()
+
+    # ======================================================
+    # EDIT MODE (table)
+    # ======================================================
+    if st.session_state.adhoc_edit_mode and not st.session_state.adhoc_bulk_delete and len(adhoc_view_df) > 0:
+        adhoc_view_df = adhoc_view_df.sort_values("Order").reset_index(drop=True)
+
+        edit_cols = ["Area", "ID", "Activity", "Owner", "Status", "Last Done", "Notes", "Order"]
+        edit_df = adhoc_view_df[edit_cols].copy()
+
+        col_cfg = {
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                options=EOM_STATUS_OPTIONS,
+                default=EOM_WHITE,
+                width="small"
+            )
+        }
+
+        edited = st.data_editor(
+            edit_df,
+            use_container_width=True,
+            num_rows="fixed",
+            hide_index=True,
+            column_config=col_cfg,
+            disabled=["Order"],
+            key="adhoc_edit_editor"
+        )
+
+        # salva se cambia qualcosa
+        if "adhoc_last_saved_state" not in st.session_state:
+            st.session_state.adhoc_last_saved_state = edit_df.to_dict("records")
+
+        current_state = edited.to_dict("records")
+        if current_state != st.session_state.adhoc_last_saved_state:
+            fresh = load_from_gsheet(ADHOC_SHEET_NAME, ADHOC_COLUMNS, date_cols=["Last Done", "Last Update"])
+            if "Order" not in fresh.columns:
+                fresh["Order"] = range(len(fresh))
+            fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
+
+            # applica modifiche per Order
+            for _, r in edited.iterrows():
+                o = int(r["Order"])
+                mask = fresh["Order"] == o
+                if mask.any():
+                    for c in ["Area", "ID", "Activity", "Owner", "Status", "Last Done", "Notes"]:
+                        if c in fresh.columns and c in edited.columns:
+                            # Last Done: prova a convertirlo (se l'editor lo porta come stringa)
+                            if c == "Last Done":
+                                fresh.loc[mask, c] = pd.to_datetime(r[c], errors="coerce")
+                            else:
+                                fresh.loc[mask, c] = r[c]
+
+                    # auto: se status diventa 🟢 e Last Done è vuoto -> set now
+                    try:
+                        new_status = str(r["Status"]).strip()
+                        if new_status == EOM_GREEN:
+                            cur_ld = fresh.loc[mask, "Last Done"].iloc[0]
+                            if pd.isna(cur_ld):
+                                fresh.loc[mask, "Last Done"] = pd.Timestamp.now()
+                    except:
+                        pass
+
+            fresh["Last Update"] = pd.Timestamp.now()
+            fresh = fresh.sort_values("Order").reset_index(drop=True)
+            fresh["Order"] = range(len(fresh))
+
+            if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
+                st.session_state.adhoc_last_saved_state = current_state
+                time.sleep(0.3)
+                st.rerun()
+
+        st.divider()
+
+    # ======================================================
+    # VIEW MODE (table with quick status edits)
+    # ======================================================
+    if not st.session_state.adhoc_edit_mode and not st.session_state.adhoc_bulk_delete and len(adhoc_view_df) > 0:
+        adhoc_view_df = adhoc_view_df.sort_values("Order").reset_index(drop=True)
+
+        display_cols = ["Area", "ID", "Activity", "Owner", "Status", "Last Done", "Notes"]
+        display_df = adhoc_view_df[display_cols].copy()
+
+        column_config = {
+            "Status": st.column_config.SelectboxColumn(
+                "Status",
+                options=EOM_STATUS_OPTIONS,
+                default=EOM_WHITE,
+                width="small"
+            )
+        }
+
+        st.markdown("### 📊 Status Table")
+
+        edited = st.data_editor(
+            display_df,
+            use_container_width=True,
+            num_rows="fixed",
+            hide_index=True,
+            column_config=column_config,
+            key="adhoc_view_editor"
+        )
+
+        # salva solo se cambiano Status / Last Done / Notes
+        changes_detected = False
+        for c in ["Status", "Last Done", "Notes"]:
+            if c in edited.columns and c in display_df.columns:
+                if not edited[c].equals(display_df[c]):
+                    changes_detected = True
+                    break
+
+        if changes_detected:
+            fresh = load_from_gsheet(ADHOC_SHEET_NAME, ADHOC_COLUMNS, date_cols=["Last Done", "Last Update"])
+            if "Order" not in fresh.columns:
+                fresh["Order"] = range(len(fresh))
+            fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
+
+            # mappa per posizione -> Order
+            for idx, r in edited.iterrows():
+                o = int(adhoc_view_df.iloc[idx]["Order"])
+                mask = fresh["Order"] == o
+                if mask.any():
+                    # status
+                    if "Status" in r:
+                        fresh.loc[mask, "Status"] = r["Status"] if str(r["Status"]).strip() in EOM_STATUS_OPTIONS else EOM_WHITE
+
+                    # notes
+                    if "Notes" in r:
+                        fresh.loc[mask, "Notes"] = r["Notes"]
+
+                    # last done (parse)
+                    if "Last Done" in r:
+                        fresh.loc[mask, "Last Done"] = pd.to_datetime(r["Last Done"], errors="coerce")
+
+                    # auto: se status diventa 🟢 e Last Done è vuoto -> set now
+                    try:
+                        if str(r["Status"]).strip() == EOM_GREEN:
+                            cur_ld = fresh.loc[mask, "Last Done"].iloc[0]
+                            if pd.isna(cur_ld):
+                                fresh.loc[mask, "Last Done"] = pd.Timestamp.now()
+                    except:
+                        pass
+
+            fresh["Last Update"] = pd.Timestamp.now()
+            fresh = fresh.sort_values("Order").reset_index(drop=True)
+            fresh["Order"] = range(len(fresh))
+
+            if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
+                time.sleep(0.3)
+                st.rerun()
+
+        st.divider()
+
+        # metriche (exclude gray)
+        total = len(adhoc_full_df)
+        todo_mask = adhoc_full_df["Status"] != EOM_GRAY if "Status" in adhoc_full_df.columns else pd.Series([True]*total)
+        total_todo = int(todo_mask.sum())
+        completed = int(((adhoc_full_df["Status"] == EOM_GREEN) & todo_mask).sum()) if "Status" in adhoc_full_df.columns else 0
+        pct = int((completed/total_todo)*100) if total_todo > 0 else 0
+
+        st.metric("Overall Progress", f"{completed}/{total_todo}", f"{pct}%")
+
+    elif not st.session_state.adhoc_edit_mode and not st.session_state.adhoc_bulk_delete and len(adhoc_full_df) == 0:
+        st.info("📝 No Ad Hoc activities yet. Add your first activity above!")
+
+    st.divider()
+    if len(adhoc_full_df) > 0:
+        todo_mask = adhoc_full_df["Status"] != EOM_GRAY if "Status" in adhoc_full_df.columns else pd.Series([True]*len(adhoc_full_df))
+        total_todo = int(todo_mask.sum())
+        completed = int(((adhoc_full_df["Status"] == EOM_GREEN) & todo_mask).sum()) if "Status" in adhoc_full_df.columns else 0
+        st.caption(f"📊 Total activities: {len(adhoc_full_df)} | Completed: {completed}/{total_todo}")
