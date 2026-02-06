@@ -4,11 +4,11 @@ from datetime import date, datetime, timedelta
 import calendar
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-import json
 import time
 import socket
 import re
 import hashlib
+import json
 
 # =========================
 # CONFIG
@@ -25,18 +25,17 @@ EOM_BASE_COLUMNS = [
     "Activity", "Frequency", "Files", "🗑️ Delete", "Last Update", "Order"
 ]
 
-# ✅ NEW: Colonna separata per le descrizioni delle attività EOM
-EOM_DESCRIPTIONS_COLUMNS = [
-    "Activity", "Description", "Last Update"
-]
+# ✅ Colonna separata per le descrizioni delle attività EOM
+EOM_DESCRIPTIONS_SHEET = "EOM_Descriptions"
+EOM_DESCRIPTIONS_COLUMNS = ["Activity", "Description", "Last Update"]
 
 # =========================
-# ✅ NEW: AD HOC ACTIVITIES (non ricorrenti)
+# ✅ AD HOC ACTIVITIES (UPDATED: NO OWNER + MACRO/MICRO + SORT + AUTOFILL + DESCRIPTIONS)
 # =========================
 ADHOC_SHEET_NAME = "AdHoc"
 ADHOC_COLUMNS = [
-    "Area", "ID",
-    "Activity", "Owner",
+    "Area", "ID Macro", "ID Micro",
+    "Activity",
     "Status",
     "Last Done",
     "Notes",
@@ -45,8 +44,11 @@ ADHOC_COLUMNS = [
     "Order"
 ]
 
+ADHOC_DESCRIPTIONS_SHEET = "ADHOC_Descriptions"
+ADHOC_DESCRIPTIONS_COLUMNS = ["Activity", "Description", "Last Update"]
+
 # =========================
-# ✅ NEW: EOM STATUS DOTS (white default + gray/green/red)
+# ✅ STATUS DOTS (white default + gray/green/red)
 # =========================
 EOM_WHITE = "⚪"   # default / not answered
 EOM_GRAY  = "⚫"   # not to do (excluded from denominator)
@@ -71,28 +73,23 @@ def create_sheet_if_not_exists(sheet_name, columns):
     try:
         service = get_gsheet_service()
         spreadsheet_id = st.secrets["spreadsheet_id"]
-        
-        # Ottieni lista fogli esistenti
+
         spreadsheet = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
         sheets = spreadsheet.get('sheets', [])
         sheet_names = [sheet['properties']['title'] for sheet in sheets]
-        
-        # Se il foglio non esiste, crealo
+
         if sheet_name not in sheet_names:
             requests = [{
                 'addSheet': {
-                    'properties': {
-                        'title': sheet_name
-                    }
+                    'properties': {'title': sheet_name}
                 }
             }]
-            
+
             service.spreadsheets().batchUpdate(
                 spreadsheetId=spreadsheet_id,
                 body={'requests': requests}
             ).execute()
-            
-            # Aggiungi gli header
+
             values = [columns]
             service.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id,
@@ -100,7 +97,7 @@ def create_sheet_if_not_exists(sheet_name, columns):
                 valueInputOption='RAW',
                 body={'values': values}
             ).execute()
-            
+
             return True
         return False
     except Exception as e:
@@ -117,13 +114,10 @@ def save_to_gsheet(df, sheet_name):
             service = get_gsheet_service()
             spreadsheet_id = st.secrets["spreadsheet_id"]
 
-            # Imposta timeout
             socket.setdefaulttimeout(15)
 
-            # Prepara i dati in modo sicuro
             df_copy = df.copy()
 
-            # Converti TUTTI i tipi in stringhe in modo sicuro
             for col in df_copy.columns:
                 if pd.api.types.is_datetime64_any_dtype(df_copy[col]):
                     df_copy[col] = df_copy[col].apply(
@@ -132,23 +126,17 @@ def save_to_gsheet(df, sheet_name):
                 elif df_copy[col].dtype == 'bool':
                     df_copy[col] = df_copy[col].apply(lambda x: 'True' if x else 'False')
                 else:
-                    df_copy[col] = df_copy[col].apply(
-                        lambda x: '' if pd.isna(x) else str(x)
-                    )
+                    df_copy[col] = df_copy[col].apply(lambda x: '' if pd.isna(x) else str(x))
 
-            # Converti in lista (header + dati)
             values = [df_copy.columns.tolist()] + df_copy.values.tolist()
 
-            # Prima cancella tutto il foglio
             service.spreadsheets().values().clear(
                 spreadsheetId=spreadsheet_id,
                 range=f"{sheet_name}!A1:ZZ10000"
             ).execute()
 
-            # Aspetta un momento per assicurare che la cancellazione sia completata
             time.sleep(0.3)
 
-            # Poi scrivi i nuovi dati
             service.spreadsheets().values().update(
                 spreadsheetId=spreadsheet_id,
                 range=f"{sheet_name}!A1",
@@ -156,9 +144,7 @@ def save_to_gsheet(df, sheet_name):
                 body={'values': values}
             ).execute()
 
-            # Invalida cache dopo salvataggio
             st.cache_data.clear()
-
             return True
 
         except socket.timeout:
@@ -191,7 +177,6 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
             service = get_gsheet_service()
             spreadsheet_id = st.secrets["spreadsheet_id"]
 
-            # Imposta timeout
             socket.setdefaulttimeout(15)
 
             result = service.spreadsheets().values().get(
@@ -201,20 +186,17 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
 
             values = result.get('values', [])
 
-            # Se non ci sono dati, ritorna DataFrame vuoto
             if not values or len(values) < 2:
                 df = pd.DataFrame(columns=columns)
                 if "Order" in columns:
                     df["Order"] = []
                 return df
 
-            # Crea DataFrame (prima riga = header)
             df = pd.DataFrame(values[1:], columns=values[0])
 
-            # Gestisci colonne mancanti
             for col in columns:
                 if col not in df.columns:
-                    if col in ["Release Date", "Due Date", "Last Update"]:
+                    if col in ["Release Date", "Due Date", "Last Update", "Last Done"]:
                         df[col] = pd.NaT
                     elif col == "Order":
                         df[col] = range(len(df))
@@ -223,17 +205,14 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
                     else:
                         df[col] = ""
 
-            # Converti date
             if date_cols:
                 for col in date_cols:
                     if col in df.columns:
                         df[col] = pd.to_datetime(df[col], errors='coerce')
 
-            # Converti Order in int
             if "Order" in df.columns:
                 df["Order"] = pd.to_numeric(df["Order"], errors='coerce').fillna(0).astype(int)
 
-            # Converti booleani
             if "🗑️ Delete" in df.columns:
                 df["🗑️ Delete"] = df["🗑️ Delete"].apply(
                     lambda x: True if str(x).lower() in ['true', '1', 'yes'] else False
@@ -264,18 +243,16 @@ def load_from_gsheet(sheet_name, columns, date_cols=None):
 # =========================
 # LOAD DATA CON CACHE
 # =========================
-@st.cache_data(ttl=30)  # Cache per 30 secondi
+@st.cache_data(ttl=30)
 def load_projects_data():
-    """Carica dati Projects con cache"""
     df = load_from_gsheet("Projects", PROJECT_COLUMNS, date_cols=["Release Date", "Due Date", "Last Update"])
     df["Owner"] = df["Owner"].fillna("")
     df["GR/Mail Object"] = df["GR/Mail Object"].fillna("")
     df["Notes"] = df["Notes"].fillna("")
     return df
 
-@st.cache_data(ttl=30)  # Cache per 30 secondi
+@st.cache_data(ttl=30)
 def load_eom_data():
-    """Carica dati EOM con cache"""
     eom_df = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
     if "Last Update" not in eom_df.columns:
         eom_df["Last Update"] = pd.Timestamp.now()
@@ -283,26 +260,18 @@ def load_eom_data():
         eom_df["Order"] = range(len(eom_df))
     return eom_df
 
-@st.cache_data(ttl=30)  # Cache per 30 secondi
+@st.cache_data(ttl=30)
 def load_eom_descriptions():
-    """Carica descrizioni EOM da foglio separato"""
     try:
-        # Prima prova a creare il foglio se non esiste
-        create_sheet_if_not_exists("EOM_Descriptions", EOM_DESCRIPTIONS_COLUMNS)
-        
-        desc_df = load_from_gsheet("EOM_Descriptions", EOM_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
+        create_sheet_if_not_exists(EOM_DESCRIPTIONS_SHEET, EOM_DESCRIPTIONS_COLUMNS)
+        desc_df = load_from_gsheet(EOM_DESCRIPTIONS_SHEET, EOM_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
         return desc_df
-    except Exception as e:
-        # Se il foglio non esiste, crea DataFrame vuoto
-        empty_df = pd.DataFrame(columns=EOM_DESCRIPTIONS_COLUMNS)
-        return empty_df
+    except:
+        return pd.DataFrame(columns=EOM_DESCRIPTIONS_COLUMNS)
 
-# =========================
-# ✅ NEW: LOAD AD HOC DATA
-# =========================
+# ✅ NEW: LOAD ADHOC DATA (UPDATED)
 @st.cache_data(ttl=30)
 def load_adhoc_data():
-    """Carica dati AdHoc con cache"""
     try:
         create_sheet_if_not_exists(ADHOC_SHEET_NAME, ADHOC_COLUMNS)
     except:
@@ -326,14 +295,21 @@ def load_adhoc_data():
     df["Status"] = df["Status"].fillna(EOM_WHITE).replace("", EOM_WHITE)
     df["Status"] = df["Status"].apply(lambda x: x if str(x).strip() in EOM_STATUS_OPTIONS else EOM_WHITE)
 
-    for c in ["Area", "ID", "Activity", "Owner", "Notes"]:
+    for c in ["Area", "ID Macro", "ID Micro", "Activity", "Notes"]:
         if c in df.columns:
             df[c] = df[c].fillna("").astype(str)
 
     df["🗑️ Delete"] = df["🗑️ Delete"].apply(lambda x: True if str(x).lower() in ['true', '1', 'yes'] else False)
     df["Order"] = pd.to_numeric(df["Order"], errors="coerce").fillna(0).astype(int)
-
     return df
+
+@st.cache_data(ttl=30)
+def load_adhoc_descriptions():
+    try:
+        create_sheet_if_not_exists(ADHOC_DESCRIPTIONS_SHEET, ADHOC_DESCRIPTIONS_COLUMNS)
+        return load_from_gsheet(ADHOC_DESCRIPTIONS_SHEET, ADHOC_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
+    except:
+        return pd.DataFrame(columns=ADHOC_DESCRIPTIONS_COLUMNS)
 
 # =========================
 # SESSION STATE
@@ -378,15 +354,12 @@ if "show_old_months" not in st.session_state:
     st.session_state.show_old_months = False
 if "selected_old_months" not in st.session_state:
     st.session_state.selected_old_months = []
-# ✅ NEW: Session state per il click sulla riga
 if "selected_activity_row" not in st.session_state:
     st.session_state.selected_activity_row = None
 if "description_edit_mode" not in st.session_state:
     st.session_state.description_edit_mode = False
 
-# =========================
-# ✅ NEW: SESSION STATE ADHOC
-# =========================
+# ✅ ADHOC session state
 if "adhoc_edit_mode" not in st.session_state:
     st.session_state.adhoc_edit_mode = False
 if "adhoc_bulk_delete" not in st.session_state:
@@ -395,6 +368,8 @@ if "show_adhoc_filters" not in st.session_state:
     st.session_state.show_adhoc_filters = False
 if "reset_adhoc_filters_flag" not in st.session_state:
     st.session_state.reset_adhoc_filters_flag = 0
+if "adhoc_description_edit_mode" not in st.session_state:
+    st.session_state.adhoc_description_edit_mode = False
 
 # =========================
 # HELPERS
@@ -406,8 +381,9 @@ def parse_id(id_str):
     """Estrae macro e micro ID da una stringa come '1.2' o '1'"""
     if not id_str or pd.isna(id_str):
         return None, None
-
     id_str = str(id_str).strip()
+    if id_str == "":
+        return None, None
     if '.' in id_str:
         parts = id_str.split('.')
         try:
@@ -422,16 +398,10 @@ def parse_id(id_str):
         except:
             return None, None
 
-# ✅ NEW: EOM sort by Macro ID then Micro ID (e.g., 7, 7.1, 7.2...)
-def sort_eom_by_ids(df):
-    """
-    Ordina le attività EOM per ID Macro (numerico) e poi per ID Micro (numerico),
-    mettendo la riga macro (senza micro) prima delle micro.
-    Mantiene stabilità con Order come tie-break.
-    """
+def sort_by_ids(df, macro_col="ID Macro", micro_col="ID Micro", order_col="Order"):
+    """Ordina per ID Macro poi ID Micro (macro prima delle micro), stabile con Order"""
     if df is None or len(df) == 0:
         return df
-
     d = df.copy()
 
     def _macro_key(x):
@@ -442,75 +412,69 @@ def sort_eom_by_ids(df):
             return 10**9
 
     def _micro_key(x):
-        # ID Micro può essere "7.2" oppure vuoto. Vogliamo: None -> 0 (prima), poi 1,2,3...
         try:
             _, micro = parse_id(x)
             return micro if micro is not None else 0
         except:
             return 0
 
-    d["_macro_sort"] = d["ID Macro"].apply(_macro_key) if "ID Macro" in d.columns else 10**9
-    d["_micro_sort"] = d["ID Micro"].apply(_micro_key) if "ID Micro" in d.columns else 0
+    d["_macro_sort"] = d[macro_col].apply(_macro_key) if macro_col in d.columns else 10**9
+    d["_micro_sort"] = d[micro_col].apply(_micro_key) if micro_col in d.columns else 0
+    if order_col not in d.columns:
+        d[order_col] = range(len(d))
 
-    if "Order" not in d.columns:
-        d["Order"] = range(len(d))
-
-    d = d.sort_values(by=["_macro_sort", "_micro_sort", "Order"], ascending=[True, True, True]).reset_index(drop=True)
+    d = d.sort_values(by=["_macro_sort", "_micro_sort", order_col], ascending=[True, True, True]).reset_index(drop=True)
     d = d.drop(columns=["_macro_sort", "_micro_sort"], errors="ignore")
     return d
 
-def renumber_eom_ids(df):
-    """Rinumera automaticamente gli ID Macro e Micro del DataFrame EOM"""
-    if len(df) == 0:
+def renumber_ids(df, macro_col="ID Macro", micro_col="ID Micro"):
+    """Rinumera automaticamente gli ID Macro e Micro di un DataFrame (stile EOM)"""
+    if df is None or len(df) == 0:
         return df
 
-    df = df.copy()
+    d = df.copy()
+    if macro_col not in d.columns:
+        d[macro_col] = ""
+    if micro_col not in d.columns:
+        d[micro_col] = ""
 
-    # Parsing degli ID esistenti
-    df['parsed_macro'] = df['ID Macro'].apply(lambda x: parse_id(x)[0])
-    df['parsed_micro'] = df['ID Micro'].apply(lambda x: parse_id(x)[1])
+    d["parsed_macro"] = d[macro_col].apply(lambda x: parse_id(x)[0])
+    d["parsed_micro"] = d[micro_col].apply(lambda x: parse_id(x)[1])
 
-    # Ordina per macro e micro ID
-    df = df.sort_values(['parsed_macro', 'parsed_micro'], na_position='last').reset_index(drop=True)
+    d = d.sort_values(["parsed_macro", "parsed_micro"], na_position="last").reset_index(drop=True)
 
-    # Rinumerazione
     new_macro_counter = 1
     macro_mapping = {}
 
-    for idx, row in df.iterrows():
-        old_macro = row['parsed_macro']
-
+    for idx, row in d.iterrows():
+        old_macro = row["parsed_macro"]
         if pd.isna(old_macro):
             continue
-
-        # Se questo macro ID non è ancora stato mappato
         if old_macro not in macro_mapping:
             macro_mapping[old_macro] = new_macro_counter
             new_macro_counter += 1
+        d.loc[idx, macro_col] = str(macro_mapping[old_macro])
 
-        new_macro = macro_mapping[old_macro]
-
-        # Aggiorna ID Macro
-        df.loc[idx, 'ID Macro'] = str(new_macro)
-
-    # Rinumerazione Micro ID per ciascun gruppo Macro
-    for macro_id in df['ID Macro'].unique():
+    for macro_id in d[macro_col].unique():
         if not macro_id or pd.isna(macro_id):
             continue
-
-        mask = df['ID Macro'] == macro_id
-        micro_rows = df[mask & df['parsed_micro'].notna()]
-
+        mask = d[macro_col] == macro_id
+        micro_rows = d[mask & d["parsed_micro"].notna()]
         if len(micro_rows) > 0:
             new_micro_counter = 1
             for idx in micro_rows.index:
-                df.loc[idx, 'ID Micro'] = f"{macro_id}.{new_micro_counter}"
+                d.loc[idx, micro_col] = f"{macro_id}.{new_micro_counter}"
                 new_micro_counter += 1
 
-    # Rimuovi colonne temporanee
-    df = df.drop(['parsed_macro', 'parsed_micro'], axis=1)
+    d = d.drop(["parsed_macro", "parsed_micro"], axis=1, errors="ignore")
+    return d
 
-    return df
+# ✅ EOM sort by Macro ID then Micro ID (e.g., 7, 7.1, 7.2...)
+def sort_eom_by_ids(df):
+    return sort_by_ids(df, "ID Macro", "ID Micro", "Order")
+
+def renumber_eom_ids(df):
+    return renumber_ids(df, "ID Macro", "ID Micro")
 
 def clean_eom_dataframe(df, month_cols):
     """Pulisce il DataFrame EOM assicurando i tipi corretti"""
@@ -521,25 +485,16 @@ def clean_eom_dataframe(df, month_cols):
             df[col] = df[col].fillna(EOM_WHITE)
             df[col] = df[col].replace("", EOM_WHITE)
 
-            # ✅ NEW: include GRAY, and normalize legacy values
             def _norm_status(x):
                 s = str(x).strip()
-
-                # Keep if already one of our dots
                 if s in EOM_STATUS_OPTIONS:
                     return s
-
-                # legacy / boolean-like -> map
                 if s in ["True", "true", "Done", "1"]:
                     return EOM_GREEN
                 if s in ["False", "false", "Undone", "0"]:
                     return EOM_RED
-
-                # gray / n-a like strings
                 if s.lower() in ["na", "n/a", "not applicable", "not to do", "skip", "skipped", "excluded", "no"]:
                     return EOM_GRAY
-
-                # default
                 return EOM_WHITE
 
             df[col] = df[col].apply(_norm_status)
@@ -556,6 +511,20 @@ def clean_eom_dataframe(df, month_cols):
 
     return df
 
+def clean_status_series(series: pd.Series) -> pd.Series:
+    def _norm(x):
+        s = str(x).strip()
+        if s in EOM_STATUS_OPTIONS:
+            return s
+        if s in ["True", "true", "Done", "1"]:
+            return EOM_GREEN
+        if s in ["False", "false", "Undone", "0"]:
+            return EOM_RED
+        if s.lower() in ["na", "n/a", "not applicable", "not to do", "skip", "skipped", "excluded", "no"]:
+            return EOM_GRAY
+        return EOM_WHITE
+    return series.fillna(EOM_WHITE).replace("", EOM_WHITE).apply(_norm)
+
 def last_working_day(year, month):
     """Calcola l'ultimo giorno lavorativo del mese"""
     last_day = date(year, month, calendar.monthrange(year, month)[1])
@@ -567,15 +536,13 @@ def get_next_months(n=6, include_previous=True):
     """Genera TUTTI i mesi (anche quelli vecchi per mantenere i dati)"""
     today = date.today()
     all_months = []
-    
-    # Il "current working month" è il mese precedente a quello attuale
+
     current_year = today.year
     current_month = today.month - 1
     if current_month < 1:
         current_month = 12
         current_year -= 1
-    
-    # Genera mesi partendo da 12 mesi fa (per mantenere storico)
+
     for i in range(12, -2, -1):  # Da -12 a +1 mese
         month = current_month - i
         year = current_year
@@ -586,25 +553,21 @@ def get_next_months(n=6, include_previous=True):
             month -= 12
             year += 1
         all_months.append((year, month))
-    
-    # Rimuovi duplicati e ordina
+
     all_months = sorted(list(set(all_months)))
-    
     return all_months
 
 def get_visible_months():
     """Restituisce solo i mesi da visualizzare: 4 precedenti + current + 1 successivo"""
     today = date.today()
     visible_months = []
-    
-    # Current working month
+
     current_year = today.year
     current_month = today.month - 1
     if current_month < 1:
         current_month = 12
         current_year -= 1
-    
-    # 4 mesi precedenti
+
     for i in range(4, 0, -1):
         month = current_month - i
         year = current_year
@@ -612,35 +575,29 @@ def get_visible_months():
             month += 12
             year -= 1
         visible_months.append((year, month))
-    
-    # Current month
+
     visible_months.append((current_year, current_month))
-    
-    # 1 mese successivo
+
     month = current_month + 1
     year = current_year
     if month > 12:
         month = 1
         year += 1
     visible_months.append((year, month))
-    
+
     return visible_months
 
 def get_activity_description(activity_name, descriptions_df):
-    """Recupera la descrizione di un'attività"""
     if len(descriptions_df) == 0:
         return ""
-    
     mask = descriptions_df["Activity"] == activity_name
     if mask.any():
         return descriptions_df.loc[mask, "Description"].iloc[0]
     return ""
 
-def save_activity_description(activity_name, description, descriptions_df):
-    """Salva la descrizione di un'attività"""
-    # Aggiorna o crea nuova descrizione
+def save_activity_description(activity_name, description, descriptions_df, sheet_name):
     mask = descriptions_df["Activity"] == activity_name
-    
+
     if mask.any():
         descriptions_df.loc[mask, "Description"] = description
         descriptions_df.loc[mask, "Last Update"] = pd.Timestamp.now()
@@ -651,9 +608,8 @@ def save_activity_description(activity_name, description, descriptions_df):
             "Last Update": pd.Timestamp.now()
         }])
         descriptions_df = pd.concat([descriptions_df, new_row], ignore_index=True)
-    
-    # Salva su Google Sheets
-    if save_to_gsheet(descriptions_df, "EOM_Descriptions"):
+
+    if save_to_gsheet(descriptions_df, sheet_name):
         st.cache_data.clear()
         return True
     return False
@@ -665,6 +621,7 @@ df = load_projects_data()
 eom_df = load_eom_data()
 eom_descriptions_df = load_eom_descriptions()
 adhoc_df = load_adhoc_data()
+adhoc_descriptions_df = load_adhoc_descriptions()
 
 # =========================
 # HEADER + NAVIGATION
@@ -683,7 +640,6 @@ with nav2:
         st.session_state.section = "EOM"
         st.rerun()
 
-# ✅ NEW: terzo pulsante senza modificare i due sopra
 nav3a, nav3b = st.columns([1, 1])
 with nav3a:
     if st.button("🧩 Ad Hoc Activities", use_container_width=True,
@@ -777,7 +733,6 @@ if st.session_state.section == "Projects":
                     st.session_state.reset_filters_flag += 1
                     st.rerun()
 
-        # Apply filters
         filtered_df = df.copy()
 
         if selected_area != "All":
@@ -820,7 +775,6 @@ if st.session_state.section == "Projects":
     if st.session_state.add_project:
         st.subheader("➕ New Project")
 
-        # ✅ NEW: Area dropdown (existing) + still editable
         existing_project_areas = []
         try:
             existing_project_areas = sorted(load_projects_data()["Area"].dropna().astype(str).unique().tolist())
@@ -834,9 +788,7 @@ if st.session_state.section == "Projects":
             key="projects_area_picker"
         )
 
-        # Prefill the existing text_input ("Area") without changing its line
         if selected_area_pick:
-            # TextInput without explicit key uses label as key
             st.session_state["Area"] = selected_area_pick
 
         area = st.text_input("Area")
@@ -976,7 +928,6 @@ if st.session_state.section == "Projects":
     # 📁 PROJECT VIEW - ORGANIZZATO PER STATUS E AREA
     # ======================================================
     if not st.session_state.add_project and len(df) > 0:
-        # Dividi progetti in In Progress e Completed
         in_progress_projects = {}
         completed_projects = {}
 
@@ -986,21 +937,13 @@ if st.session_state.section == "Projects":
             completion = proj_df["Progress"].map(progress_score).mean()
 
             if completion == 1.0:
-                if area not in completed_projects:
-                    completed_projects[area] = []
-                completed_projects[area].append(project)
+                completed_projects.setdefault(area, []).append(project)
             else:
-                if area not in in_progress_projects:
-                    in_progress_projects[area] = []
-                in_progress_projects[area].append(project)
+                in_progress_projects.setdefault(area, []).append(project)
 
-        # Ordina le aree alfabeticamente
         in_progress_areas = sorted(in_progress_projects.keys())
         completed_areas = sorted(completed_projects.keys())
 
-        # ======================================================
-        # IN PROGRESS SECTION
-        # ======================================================
         if in_progress_areas:
             st.markdown("### 📂 In Progress")
 
@@ -1031,7 +974,6 @@ if st.session_state.section == "Projects":
                             cols = st.columns([10, 1])
                             with cols[0]:
                                 if st.session_state.edit_mode:
-                                    # EDIT MODE - Mostra campi editabili
                                     st.markdown(f"**Edit Task: {r['Task']}**")
 
                                     new_task = st.text_input("Task Name", value=r['Task'], key=f"edit_task_{idx}")
@@ -1094,7 +1036,6 @@ if st.session_state.section == "Projects":
                                             st.rerun()
 
                                 else:
-                                    # VIEW MODE - Mostra dati come prima
                                     st.markdown(f"**{r['Task']}**")
                                     st.write(f"👤 Owner: {r['Owner'] if r['Owner'] else '—'}")
 
@@ -1125,7 +1066,6 @@ if st.session_state.section == "Projects":
                                         placeholder="Add your notes here..."
                                     )
 
-                                    # OTTIMIZZATO: Salva notes senza rerun
                                     if notes != current_notes:
                                         df.loc[idx, "Notes"] = notes
                                         df.loc[idx, "Last Update"] = pd.Timestamp.now()
@@ -1158,9 +1098,6 @@ if st.session_state.section == "Projects":
 
                 st.divider()
 
-        # ======================================================
-        # COMPLETED SECTION
-        # ======================================================
         if completed_areas:
             st.markdown("### ✅ Completed")
 
@@ -1207,116 +1144,72 @@ if st.session_state.section == "EOM":
         except:
             st.caption(f"🕒 Last update: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
 
-    # ✅ TUTTI I MESI (per mantenere i dati su Google Sheets)
     all_months = get_next_months()
     all_eom_dates = [last_working_day(y, m) for y, m in all_months]
     all_month_cols = [d.strftime("%d %B %Y") for d in all_eom_dates]
-    
-    # ✅ MESI VISIBILI (4 precedenti + current + 1 successivo)
+
     visible_months = get_visible_months()
     visible_eom_dates = [last_working_day(y, m) for y, m in visible_months]
     visible_month_cols = [d.strftime("%d %B %Y") for d in visible_eom_dates]
-    
-    # Il current working month è il 5° nella lista dei visibili (indice 4)
+
     current_month_col = visible_month_cols[4]
-    
-    # ✅ Mesi vecchi (non visibili di default)
     old_month_cols = [col for col in all_month_cols if col not in visible_month_cols]
 
     for col in EOM_BASE_COLUMNS:
         if col not in eom_df.columns:
-            if col == "🗑️ Delete":
-                eom_df[col] = False
-            else:
-                eom_df[col] = ""
+            eom_df[col] = False if col == "🗑️ Delete" else ""
 
-    # ✅ Crea colonne per TUTTI i mesi (anche quelli vecchi)
     for c in all_month_cols:
         if c not in eom_df.columns:
-            eom_df[c] = EOM_WHITE  # ✅ default white
+            eom_df[c] = EOM_WHITE
 
     eom_df = clean_eom_dataframe(eom_df, all_month_cols)
 
-    # ======================================================
-    # ✅ FIX: EOM FILTERS + SAFE VIEW/EDIT DATAFRAMES
-    # ======================================================
-    eom_full_df = eom_df.copy()   # SEMPRE completo -> è quello che si salva
-    eom_view_df = eom_df.copy()   # quello che si mostra (eventualmente filtrato)
+    eom_full_df = eom_df.copy()
+    eom_view_df = eom_df.copy()
 
     col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     with col1:
         st.caption(f"🎯 **Current working month**: {current_month_col}")
     with col2:
-        if st.button("🔍 Filters" if not st.session_state.show_eom_filters else "🔍 Hide",
-                     use_container_width=True):
+        if st.button("🔍 Filters" if not st.session_state.show_eom_filters else "🔍 Hide", use_container_width=True):
             st.session_state.show_eom_filters = not st.session_state.show_eom_filters
             st.rerun()
     with col3:
-        if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View",
-                     use_container_width=True):
+        if st.button("✏️ Edit" if not st.session_state.eom_edit_mode else "✅ View", use_container_width=True):
             st.session_state.eom_edit_mode = not st.session_state.eom_edit_mode
             st.rerun()
     with col4:
-        if st.button("🗑️ Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel",
-                     use_container_width=True):
+        if st.button("🗑️ Delete" if not st.session_state.eom_bulk_delete else "❌ Cancel", use_container_width=True):
             st.session_state.eom_bulk_delete = not st.session_state.eom_bulk_delete
             st.rerun()
 
     st.divider()
 
-    # ======================================================
-    # ✅ EOM FILTERS
-    # ======================================================
     if st.session_state.show_eom_filters and len(eom_full_df) > 0:
         with st.expander("🔍 Filters (EOM)", expanded=True):
             f1, f2, f3, f4 = st.columns(4)
 
             with f1:
                 eom_areas = ["All"] + sorted(eom_full_df["Area"].dropna().unique().tolist())
-                eom_selected_area = st.selectbox(
-                    "Area",
-                    eom_areas,
-                    index=0,
-                    key=f"eom_filter_area_{st.session_state.reset_eom_filters_flag}"
-                )
+                eom_selected_area = st.selectbox("Area", eom_areas, index=0, key=f"eom_filter_area_{st.session_state.reset_eom_filters_flag}")
 
             with f2:
                 macro_vals = ["All"] + sorted([x for x in eom_full_df["ID Macro"].dropna().unique().tolist() if str(x).strip() != ""])
-                eom_selected_macro = st.selectbox(
-                    "ID Macro",
-                    macro_vals,
-                    index=0,
-                    key=f"eom_filter_macro_{st.session_state.reset_eom_filters_flag}"
-                )
+                eom_selected_macro = st.selectbox("ID Macro", macro_vals, index=0, key=f"eom_filter_macro_{st.session_state.reset_eom_filters_flag}")
 
             with f3:
                 freq_vals = ["All"] + sorted([x for x in eom_full_df["Frequency"].dropna().unique().tolist() if str(x).strip() != ""])
-                eom_selected_freq = st.selectbox(
-                    "Frequency",
-                    freq_vals,
-                    index=0,
-                    key=f"eom_filter_freq_{st.session_state.reset_eom_filters_flag}"
-                )
+                eom_selected_freq = st.selectbox("Frequency", freq_vals, index=0, key=f"eom_filter_freq_{st.session_state.reset_eom_filters_flag}")
 
             with f4:
-                # ✅ include gray in filter options
                 status_vals = ["All"] + EOM_STATUS_OPTIONS
-                eom_selected_status = st.selectbox(
-                    f"Status ({current_month_col})",
-                    status_vals,
-                    index=0,
-                    key=f"eom_filter_status_{st.session_state.reset_eom_filters_flag}"
-                )
+                eom_selected_status = st.selectbox(f"Status ({current_month_col})", status_vals, index=0, key=f"eom_filter_status_{st.session_state.reset_eom_filters_flag}")
 
             s1, s2, s3 = st.columns([2, 2, 1])
             with s1:
-                eom_search = st.text_input(
-                    "Search in Activity / Files",
-                    value="",
-                    key=f"eom_filter_search_{st.session_state.reset_eom_filters_flag}"
-                )
+                eom_search = st.text_input("Search in Activity / Files", value="", key=f"eom_filter_search_{st.session_state.reset_eom_filters_flag}")
             with s2:
-                # ✅ NUOVO: Multiselect per scegliere mesi vecchi da mostrare
                 if len(old_month_cols) > 0:
                     selected_old = st.multiselect(
                         "📅 Show old months",
@@ -1337,21 +1230,16 @@ if st.session_state.section == "EOM":
                     st.session_state.selected_old_months = []
                     st.rerun()
 
-        # Apply filters
         eom_view_df = eom_full_df.copy()
 
         if eom_selected_area != "All":
             eom_view_df = eom_view_df[eom_view_df["Area"] == eom_selected_area]
-
         if eom_selected_macro != "All":
             eom_view_df = eom_view_df[eom_view_df["ID Macro"] == eom_selected_macro]
-
         if eom_selected_freq != "All":
             eom_view_df = eom_view_df[eom_view_df["Frequency"] == eom_selected_freq]
-
         if eom_selected_status != "All" and current_month_col in eom_view_df.columns:
             eom_view_df = eom_view_df[eom_view_df[current_month_col] == eom_selected_status]
-
         if eom_search and eom_search.strip():
             pattern = re.escape(eom_search.strip())
             eom_view_df = eom_view_df[
@@ -1362,13 +1250,9 @@ if st.session_state.section == "EOM":
         st.info(f"📊 Showing {len(eom_view_df)} of {len(eom_full_df)} activities")
         st.divider()
 
-    # ======================================================
-    # BULK DELETE MODE CON RINUMERAZIONE AUTOMATICA
-    # ======================================================
     if st.session_state.eom_bulk_delete and len(eom_df) > 0:
         st.warning("🗑️ **Delete Mode**: Select activities to delete")
 
-        # ✅ NEW: Show delete list ordered by Macro/Micro
         eom_df = sort_eom_by_ids(eom_df)
 
         selected_to_delete = []
@@ -1387,11 +1271,7 @@ if st.session_state.section == "EOM":
             with col1:
                 if st.button(f"🗑️ Delete {len(selected_to_delete)} selected", type="primary", key="confirm_bulk_delete"):
                     fresh_eom = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-
-                    # Elimina le righe selezionate
                     fresh_eom = fresh_eom.drop(selected_to_delete).reset_index(drop=True)
-
-                    # Rinumera automaticamente gli ID
                     fresh_eom = renumber_eom_ids(fresh_eom)
 
                     if save_to_gsheet(fresh_eom, "EOM"):
@@ -1407,26 +1287,18 @@ if st.session_state.section == "EOM":
     with st.expander("➕ Add new End-of-Month Activity", expanded=False):
         c1, c2, c3 = st.columns(3)
 
-        # ✅ NEW: Area dropdown (existing) + still editable
         existing_eom_areas = sorted([x for x in eom_df["Area"].dropna().astype(str).unique().tolist() if x.strip() != ""])
-        picked_eom_area = c1.selectbox(
-            "Select existing Area (optional)",
-            options=[""] + existing_eom_areas,
-            index=0,
-            key="eom_area_picker"
-        )
+        picked_eom_area = c1.selectbox("Select existing Area (optional)", options=[""] + existing_eom_areas, index=0, key="eom_area_picker")
         if picked_eom_area:
             st.session_state["eom_area"] = picked_eom_area
 
         area = c1.text_input("Area", key="eom_area")
 
-        # ✅ NEW: Autofill Macro/Micro based on existing Area
         area_clean = (area or "").strip()
         if area_clean:
             existing_in_area = eom_df[eom_df["Area"].astype(str).str.strip() == area_clean].copy()
 
             if len(existing_in_area) > 0:
-                # Default Macro: più frequente
                 macro_candidates = existing_in_area["ID Macro"].dropna().astype(str).str.strip()
                 macro_candidates = [m for m in macro_candidates.tolist() if m != ""]
                 default_macro = None
@@ -1448,10 +1320,8 @@ if st.session_state.section == "EOM":
                 if default_macro and not str(st.session_state.get("eom_macro", "")).strip():
                     st.session_state["eom_macro"] = str(default_macro)
 
-                # Default Micro: successivo (es. 7.4 -> 7.5)
                 macro_for_micro = str(st.session_state.get("eom_macro", "")).strip() or (str(default_macro).strip() if default_macro else "")
                 if macro_for_micro:
-                    # prendi solo micro dello stesso macro (se esistono)
                     tmp = existing_in_area.copy()
                     tmp["__micro_num"] = tmp["ID Micro"].apply(lambda x: parse_id(x)[1] if parse_id(x)[0] is not None else None)
                     tmp["__macro_num_from_micro"] = tmp["ID Micro"].apply(lambda x: parse_id(x)[0])
@@ -1463,11 +1333,7 @@ if st.session_state.section == "EOM":
                     if macro_num is not None:
                         tmp_same_macro = tmp[tmp["__macro_num_from_micro"] == macro_num]
                         existing_micros = tmp_same_macro["__micro_num"].dropna().tolist()
-                        if len(existing_micros) > 0:
-                            next_micro = int(max(existing_micros)) + 1
-                        else:
-                            # se non ci sono micro, proponi .1
-                            next_micro = 1
+                        next_micro = int(max(existing_micros)) + 1 if len(existing_micros) > 0 else 1
 
                         if not str(st.session_state.get("eom_micro", "")).strip():
                             st.session_state["eom_micro"] = f"{macro_num}.{next_micro}"
@@ -1498,13 +1364,10 @@ if st.session_state.section == "EOM":
                     "Last Update": pd.Timestamp.now(),
                     "Order": next_order
                 }
-                # ✅ Aggiungi TUTTI i mesi (anche quelli vecchi)
                 for c in all_month_cols:
-                    row[c] = EOM_WHITE  # ✅ default white
+                    row[c] = EOM_WHITE
 
                 fresh_eom = pd.concat([fresh_eom, pd.DataFrame([row])], ignore_index=True)
-
-                # Rinumera automaticamente dopo l'aggiunta
                 fresh_eom = renumber_eom_ids(fresh_eom)
 
                 if save_to_gsheet(fresh_eom, "EOM"):
@@ -1512,29 +1375,22 @@ if st.session_state.section == "EOM":
                     time.sleep(1)
                     st.rerun()
 
-    # ======================================================
-    # ✅ EOM EDIT MODE CON FIX SALVATAGGIO
-    # ======================================================
+    # =========================
+    # EOM EDIT MODE
+    # =========================
     if st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
-
-        # ✅ NEW: Order by Macro/Micro IDs
         eom_view_df = sort_eom_by_ids(eom_view_df)
 
-        # ✅ Mostra mesi visibili + mesi vecchi selezionati
         display_month_cols = visible_month_cols.copy()
         if st.session_state.selected_old_months:
-            # Aggiungi i mesi vecchi selezionati PRIMA dei mesi visibili (in ordine cronologico)
-            selected_sorted = sorted(st.session_state.selected_old_months, 
-                                    key=lambda x: all_month_cols.index(x))
+            selected_sorted = sorted(st.session_state.selected_old_months, key=lambda x: all_month_cols.index(x))
             display_month_cols = selected_sorted + display_month_cols
             st.info(f"📅 Showing {len(selected_sorted)} old month(s) + {len(visible_month_cols)} current months")
 
         edit_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols + ["Order"]
-
         edit_df = eom_view_df[edit_cols].copy()
 
-        # ✅ INDICATORE VISIVO: Rinomina current month con emoji blu
         current_month_display = f"🔵 {current_month_col}"
         if current_month_col in edit_df.columns:
             edit_df = edit_df.rename(columns={current_month_col: current_month_display})
@@ -1545,11 +1401,9 @@ if st.session_state.section == "EOM":
         col_cfg = {}
         for c in display_month_cols_renamed:
             is_current = (c == current_month_display)
-            
-            # Trova il nome originale per verificare se è old
             original_col = current_month_col if is_current else c
             is_old = original_col in old_month_cols
-            
+
             col_cfg[c] = st.column_config.SelectboxColumn(
                 c,
                 help="🎯 **Current working month**" if is_current else ("📦 Old month" if is_old else "Future month"),
@@ -1568,28 +1422,21 @@ if st.session_state.section == "EOM":
             key="eom_edit_editor"
         )
 
-        # ✅ FIX: Salvataggio robusto senza messaggi e senza bug
-        # Rinomina indietro per il salvataggio
-        current_month_display = f"🔵 {current_month_col}"
         edited_original_names = edited.copy()
         if current_month_display in edited_original_names.columns:
             edited_original_names = edited_original_names.rename(columns={current_month_display: current_month_col})
-        
-        def df_to_comparable_dict(df):
-            """Converte DataFrame in dict comparabile per rilevare modifiche"""
-            return df.to_dict('records')
+
+        def df_to_comparable_dict(_df):
+            return _df.to_dict('records')
 
         current_state = df_to_comparable_dict(edited)
-        
-        # Inizializza lo stato salvato alla prima esecuzione
+
         if st.session_state.eom_last_saved_state is None:
             st.session_state.eom_last_saved_state = df_to_comparable_dict(edit_df)
-        
-        # Rileva modifiche confrontando con lo stato salvato
+
         if current_state != st.session_state.eom_last_saved_state:
             fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-            
-            # Aggiungi tutte le colonne mesi che potrebbero esistere (anche quelle nascoste)
+
             for c in all_month_cols:
                 if c not in fresh_full.columns:
                     fresh_full[c] = EOM_WHITE
@@ -1598,7 +1445,6 @@ if st.session_state.section == "EOM":
                 fresh_full["Order"] = range(len(fresh_full))
             fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
 
-            # Applica modifiche riga per riga usando Order come chiave (usa nomi originali)
             for _, r in edited_original_names.iterrows():
                 o = int(r["Order"])
                 mask = fresh_full["Order"] == o
@@ -1612,36 +1458,29 @@ if st.session_state.section == "EOM":
             fresh_full = clean_eom_dataframe(fresh_full, all_month_cols)
 
             if save_to_gsheet(fresh_full, "EOM"):
-                # ✅ Aggiorna lo stato salvato IMMEDIATAMENTE dopo il salvataggio
                 st.session_state.eom_last_saved_state = current_state
-                # ✅ NO messaggio di salvataggio
 
         st.divider()
 
-    # ======================================================
-    # ✅ VIEW MODE CON CLICK-TO-VIEW DESCRIPTION
-    # ======================================================
+    # =========================
+    # EOM VIEW MODE + DESCRIPTION
+    # =========================
     if not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_view_df) > 0:
         eom_view_df = eom_view_df.sort_values('Order').reset_index(drop=True)
-
-        # ✅ NEW: Order by Macro/Micro IDs
         eom_view_df = sort_eom_by_ids(eom_view_df)
 
-        # ✅ Mostra mesi visibili + mesi vecchi selezionati
         display_month_cols = visible_month_cols.copy()
         if st.session_state.selected_old_months:
-            selected_sorted = sorted(st.session_state.selected_old_months, 
-                                    key=lambda x: all_month_cols.index(x))
+            selected_sorted = sorted(st.session_state.selected_old_months, key=lambda x: all_month_cols.index(x))
             display_month_cols = selected_sorted + display_month_cols
             st.info(f"📅 Showing {len(selected_sorted)} old month(s) + {len(visible_month_cols)} current months")
 
         display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"] + display_month_cols
         display_df = eom_view_df[display_cols].copy()
 
-        # ✅ INDICATORE VISIVO: Rinomina current month con emoji azzurro
         column_config = {}
         display_df_renamed = display_df.copy()
-        
+
         current_month_display = f"🔵 {current_month_col}"
         if current_month_col in display_df_renamed.columns:
             display_df_renamed = display_df_renamed.rename(columns={current_month_col: current_month_display})
@@ -1649,13 +1488,11 @@ if st.session_state.section == "EOM":
         else:
             display_month_cols_renamed = display_month_cols
 
-        for i, col in enumerate(display_month_cols_renamed):
+        for col in display_month_cols_renamed:
             is_current = (col == current_month_display)
-            
-            # Trova il nome originale per verificare se è old
             original_col = current_month_col if is_current else col
             is_old = original_col in old_month_cols
-            
+
             column_config[col] = st.column_config.SelectboxColumn(
                 col,
                 help="🎯 **Current working month**" if is_current else ("📦 Old month" if is_old else "Future month"),
@@ -1664,18 +1501,13 @@ if st.session_state.section == "EOM":
                 width="medium" if is_current else "small"
             )
 
-        # Inizializza stato di confronto se non esiste
         if 'eom_view_snapshot' not in st.session_state:
             st.session_state.eom_view_snapshot = display_df_renamed.copy()
 
-        # ✅ TABELLA STATUS CON SELEZIONE RIGA
         st.markdown("### 📊 Status Table")
-        
-        # ✅ Selectbox per scegliere l'attività da visualizzare/modificare
-        # Crea lista con formato "Area - ID Micro - Activity"
+
         activity_display_list = []
-        activity_mapping = {}  # Mappa display -> nome attività reale
-        
+        activity_mapping = {}
         for idx, row in eom_view_df.iterrows():
             area = row["Area"]
             id_micro = row["ID Micro"]
@@ -1683,16 +1515,9 @@ if st.session_state.section == "EOM":
             display_text = f"{area} - {id_micro} - {activity}"
             activity_display_list.append(display_text)
             activity_mapping[display_text] = activity
-        
+
         activity_options = ["Select an activity..."] + activity_display_list
-        selected_display = st.selectbox(
-            "📝 View/Edit Description for:",
-            options=activity_options,
-            index=0,
-            key="activity_selector"
-        )
-        
-        # Recupera il nome reale dell'attività
+        selected_display = st.selectbox("📝 View/Edit Description for:", options=activity_options, index=0, key="activity_selector")
         selected_activity_name = activity_mapping.get(selected_display, None)
 
         edited = st.data_editor(
@@ -1705,44 +1530,34 @@ if st.session_state.section == "EOM":
             disabled=["Area", "ID Macro", "ID Micro", "Activity", "Frequency", "Files"]
         )
 
-        # ✅ GESTIONE SELEZIONE ATTIVITÀ
         selected_rows = []
         if selected_activity_name is not None:
-            # Trova l'indice dell'attività selezionata
             selected_rows = eom_view_df[eom_view_df["Activity"] == selected_activity_name].index.tolist()
             if len(selected_rows) > 0:
                 selected_rows = [selected_rows[0]]
-        
+
         if len(selected_rows) > 0:
             selected_idx = selected_rows[0]
             selected_activity = eom_view_df.iloc[selected_idx]["Activity"]
             selected_area = eom_view_df.iloc[selected_idx]["Area"]
             selected_macro = eom_view_df.iloc[selected_idx]["ID Macro"]
             selected_micro = eom_view_df.iloc[selected_idx]["ID Micro"]
-            
+
             st.divider()
-            
-            # ✅ BOX DESCRIZIONE ATTIVITÀ SELEZIONATA
             st.markdown(f"### 📝 Description for: **{selected_activity}**")
             st.caption(f"📍 {selected_area} - {selected_macro}/{selected_micro}")
-            
-            # Carica descrizione
+
             current_description = get_activity_description(selected_activity, eom_descriptions_df)
             has_description = len(current_description.strip()) > 0
-            
-            # Toggle Edit Mode
-            if st.button("✏️ Edit Description" if not st.session_state.description_edit_mode else "👁️ View Description", 
-                        use_container_width=False,
-                        key="toggle_edit_mode_btn"):
+
+            if st.button("✏️ Edit Description" if not st.session_state.description_edit_mode else "👁️ View Description",
+                        use_container_width=False, key="toggle_edit_mode_btn"):
                 st.session_state.description_edit_mode = not st.session_state.description_edit_mode
                 st.rerun()
-            
+
             st.divider()
-            
+
             if st.session_state.description_edit_mode:
-                # EDIT MODE
-                st.markdown("#### ✏️ Edit Description")
-                
                 new_description = st.text_area(
                     "Description",
                     value=current_description,
@@ -1750,7 +1565,7 @@ if st.session_state.section == "EOM":
                     key="desc_editor_main",
                     help="Write the activity description here. Supports markdown formatting."
                 )
-                
+
                 st.markdown("##### 💡 Tips:")
                 st.markdown("""
                 - Use **markdown** for formatting (bold, italic, lists, etc.)
@@ -1758,52 +1573,44 @@ if st.session_state.section == "EOM":
                 - Include links to relevant documents
                 - Mention important notes or warnings
                 """)
-                
+
                 col_save, col_cancel = st.columns(2)
                 with col_save:
                     if st.button("💾 Save Description", type="primary", key="save_desc_btn", use_container_width=True):
-                        # Ricarica descrizioni fresche
-                        fresh_descriptions = load_from_gsheet("EOM_Descriptions", EOM_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
+                        fresh_descriptions = load_from_gsheet(EOM_DESCRIPTIONS_SHEET, EOM_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
                         if len(fresh_descriptions) == 0:
                             fresh_descriptions = pd.DataFrame(columns=EOM_DESCRIPTIONS_COLUMNS)
-                        
-                        if save_activity_description(selected_activity, new_description, fresh_descriptions):
+
+                        if save_activity_description(selected_activity, new_description, fresh_descriptions, EOM_DESCRIPTIONS_SHEET):
                             st.success("✅ Description saved successfully!")
                             st.session_state.description_edit_mode = False
                             time.sleep(1)
                             st.rerun()
                         else:
                             st.error("❌ Failed to save description")
-                
+
                 with col_cancel:
                     if st.button("❌ Discard Changes", key="discard_desc_btn", use_container_width=True):
                         st.session_state.description_edit_mode = False
                         st.rerun()
-            
             else:
-                # VIEW MODE
                 if has_description:
-                    st.markdown("#### 📄 Description")
                     st.markdown(current_description)
                 else:
                     st.info("📝 No description available yet. Click '✏️ Edit' to add one.")
 
-        # ✅ SALVATAGGIO SEMPLIFICATO - Confronta solo se veramente diverso
         changes_detected = False
-        
-        # Rinomina indietro per confronto
         edited_original_names = edited.rename(columns={current_month_display: current_month_col})
-        
+
         for month_col in display_month_cols:
             if month_col in eom_view_df.columns and month_col in edited_original_names.columns:
                 if not edited_original_names[month_col].equals(eom_view_df[month_col]):
                     changes_detected = True
                     break
-        
+
         if changes_detected:
-            # Salva immediatamente
             fresh_full = load_from_gsheet("EOM", EOM_BASE_COLUMNS)
-            
+
             for c in all_month_cols:
                 if c not in fresh_full.columns:
                     fresh_full[c] = EOM_WHITE
@@ -1812,7 +1619,6 @@ if st.session_state.section == "EOM":
                 fresh_full["Order"] = range(len(fresh_full))
             fresh_full["Order"] = pd.to_numeric(fresh_full["Order"], errors='coerce').fillna(0).astype(int)
 
-            # Applica modifiche
             if "Order" in eom_view_df.columns:
                 for idx, r in edited_original_names.iterrows():
                     o = int(eom_view_df.iloc[idx]["Order"])
@@ -1824,18 +1630,14 @@ if st.session_state.section == "EOM":
 
             fresh_full["Last Update"] = pd.Timestamp.now()
             fresh_full = clean_eom_dataframe(fresh_full, all_month_cols)
-            
+
             if save_to_gsheet(fresh_full, "EOM"):
-                # Aggiorna snapshot dopo salvataggio
                 st.session_state.eom_view_snapshot = edited.copy()
                 time.sleep(0.3)
                 st.rerun()
 
         st.divider()
 
-        # ======================================================
-        # ✅ NEW: metrics exclude GRAY from denominator
-        # ======================================================
         total_activities = len(eom_df)
         if current_month_col in eom_df.columns:
             todo_mask = eom_df[current_month_col] != EOM_GRAY
@@ -1847,11 +1649,7 @@ if st.session_state.section == "EOM":
 
         progress_pct = int((completed_current / total_todo * 100)) if total_todo > 0 else 0
 
-        st.metric(
-            label="Current Month Progress",
-            value=f"{completed_current}/{total_todo}",
-            delta=f"{progress_pct}%"
-        )
+        st.metric(label="Current Month Progress", value=f"{completed_current}/{total_todo}", delta=f"{progress_pct}%")
 
     elif not st.session_state.eom_edit_mode and not st.session_state.eom_bulk_delete and len(eom_df) == 0:
         st.info("📝 No End-of-Month activities yet. Add your first activity above!")
@@ -1866,10 +1664,10 @@ if st.session_state.section == "EOM":
             total_todo = len(eom_df)
             completed_current_month = 0
 
-        st.caption(f"📊 Total activities: {len(eom_df)} | Current month completed: {completed_current_month}/{total_todo}")  
+        st.caption(f"📊 Total activities: {len(eom_df)} | Current month completed: {completed_current_month}/{total_todo}")
 
 # ======================================================
-# 🧩 AD HOC ACTIVITIES (NEW SECTION)
+# 🧩 AD HOC ACTIVITIES (UPDATED)
 # ======================================================
 if st.session_state.section == "AdHoc":
 
@@ -1884,6 +1682,11 @@ if st.session_state.section == "AdHoc":
 
     adhoc_full_df = adhoc_df.copy()
     adhoc_view_df = adhoc_df.copy()
+
+    # normalize status
+    if "Status" in adhoc_full_df.columns:
+        adhoc_full_df["Status"] = clean_status_series(adhoc_full_df["Status"])
+        adhoc_view_df["Status"] = clean_status_series(adhoc_view_df["Status"])
 
     col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
     with col1:
@@ -1915,37 +1718,18 @@ if st.session_state.section == "AdHoc":
 
             with f1:
                 areas = ["All"] + sorted([x for x in adhoc_full_df["Area"].dropna().astype(str).unique().tolist() if x.strip() != ""])
-                adhoc_selected_area = st.selectbox(
-                    "Area",
-                    areas,
-                    index=0,
-                    key=f"adhoc_filter_area_{st.session_state.reset_adhoc_filters_flag}"
-                )
+                adhoc_selected_area = st.selectbox("Area", areas, index=0, key=f"adhoc_filter_area_{st.session_state.reset_adhoc_filters_flag}")
 
             with f2:
-                owners = ["All"] + sorted([x for x in adhoc_full_df["Owner"].dropna().astype(str).unique().tolist() if x.strip() != ""])
-                adhoc_selected_owner = st.selectbox(
-                    "Owner",
-                    owners,
-                    index=0,
-                    key=f"adhoc_filter_owner_{st.session_state.reset_adhoc_filters_flag}"
-                )
+                macro_vals = ["All"] + sorted([x for x in adhoc_full_df["ID Macro"].dropna().astype(str).unique().tolist() if x.strip() != ""])
+                adhoc_selected_macro = st.selectbox("ID Macro", macro_vals, index=0, key=f"adhoc_filter_macro_{st.session_state.reset_adhoc_filters_flag}")
 
             with f3:
                 status_vals = ["All"] + EOM_STATUS_OPTIONS
-                adhoc_selected_status = st.selectbox(
-                    "Status",
-                    status_vals,
-                    index=0,
-                    key=f"adhoc_filter_status_{st.session_state.reset_adhoc_filters_flag}"
-                )
+                adhoc_selected_status = st.selectbox("Status", status_vals, index=0, key=f"adhoc_filter_status_{st.session_state.reset_adhoc_filters_flag}")
 
             with f4:
-                adhoc_search = st.text_input(
-                    "Search in Activity / Notes",
-                    value="",
-                    key=f"adhoc_filter_search_{st.session_state.reset_adhoc_filters_flag}"
-                )
+                adhoc_search = st.text_input("Search in Activity / Notes", value="", key=f"adhoc_filter_search_{st.session_state.reset_adhoc_filters_flag}")
 
             r1, r2 = st.columns([1, 3])
             with r1:
@@ -1957,13 +1741,10 @@ if st.session_state.section == "AdHoc":
 
         if adhoc_selected_area != "All":
             adhoc_view_df = adhoc_view_df[adhoc_view_df["Area"] == adhoc_selected_area]
-
-        if adhoc_selected_owner != "All":
-            adhoc_view_df = adhoc_view_df[adhoc_view_df["Owner"] == adhoc_selected_owner]
-
+        if adhoc_selected_macro != "All":
+            adhoc_view_df = adhoc_view_df[adhoc_view_df["ID Macro"] == adhoc_selected_macro]
         if adhoc_selected_status != "All":
             adhoc_view_df = adhoc_view_df[adhoc_view_df["Status"] == adhoc_selected_status]
-
         if adhoc_search and adhoc_search.strip():
             pattern = re.escape(adhoc_search.strip())
             adhoc_view_df = adhoc_view_df[
@@ -1975,12 +1756,12 @@ if st.session_state.section == "AdHoc":
         st.divider()
 
     # ======================================================
-    # BULK DELETE MODE
+    # BULK DELETE MODE (Order key, show sorted by Macro/Micro)
     # ======================================================
     if st.session_state.adhoc_bulk_delete and len(adhoc_view_df) > 0:
         st.warning("🗑️ **Delete Mode**: Select activities to delete")
 
-        adhoc_view_df = adhoc_view_df.sort_values("Order").reset_index(drop=True)
+        adhoc_view_df = sort_by_ids(adhoc_view_df, "ID Macro", "ID Micro", "Order")
 
         selected_to_delete_orders = []
         for idx, row in adhoc_view_df.iterrows():
@@ -1989,7 +1770,7 @@ if st.session_state.section == "AdHoc":
                 if st.checkbox("", key=f"adhoc_bulk_select_{idx}"):
                     selected_to_delete_orders.append(int(row["Order"]))
             with c2:
-                st.write(f"**{row['Activity']}** ({row['Area']} - ID: {row['ID']})")
+                st.write(f"**{row['Activity']}** ({row['Area']} - {row['ID Macro']}/{row['ID Micro']})")
 
         st.divider()
 
@@ -1998,14 +1779,14 @@ if st.session_state.section == "AdHoc":
             with colA:
                 if st.button(f"🗑️ Delete {len(selected_to_delete_orders)} selected", type="primary", key="adhoc_confirm_bulk_delete"):
                     fresh = load_from_gsheet(ADHOC_SHEET_NAME, ADHOC_COLUMNS, date_cols=["Last Done", "Last Update"])
-
-                    # elimina per Order (chiave stabile)
                     fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
+
                     fresh = fresh[~fresh["Order"].isin(selected_to_delete_orders)].reset_index(drop=True)
 
-                    # ricompatta Order
                     fresh = fresh.sort_values("Order").reset_index(drop=True)
                     fresh["Order"] = range(len(fresh))
+                    fresh = renumber_ids(fresh, "ID Macro", "ID Micro")
+                    fresh["Status"] = clean_status_series(fresh["Status"]) if "Status" in fresh.columns else fresh.get("Status", EOM_WHITE)
                     fresh["Last Update"] = pd.Timestamp.now()
 
                     if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
@@ -2018,7 +1799,7 @@ if st.session_state.section == "AdHoc":
         st.divider()
 
     # ======================================================
-    # ADD NEW ADHOC ACTIVITY
+    # ADD NEW ADHOC ACTIVITY (autofill macro/micro like EOM)
     # ======================================================
     with st.expander("➕ Add new Ad Hoc Activity", expanded=False):
         c1, c2, c3 = st.columns(3)
@@ -2029,8 +1810,53 @@ if st.session_state.section == "AdHoc":
             st.session_state["adhoc_area"] = picked_area
 
         area = c1.text_input("Area", key="adhoc_area")
-        adhoc_id = c2.text_input("ID (free)", key="adhoc_id")
-        owner = c3.text_input("Owner (optional)", key="adhoc_owner")
+
+        area_clean = (area or "").strip()
+        if area_clean:
+            existing_in_area = adhoc_full_df[adhoc_full_df["Area"].astype(str).str.strip() == area_clean].copy()
+
+            if len(existing_in_area) > 0:
+                macro_candidates = existing_in_area["ID Macro"].dropna().astype(str).str.strip()
+                macro_candidates = [m for m in macro_candidates.tolist() if m != ""]
+                default_macro = None
+                if len(macro_candidates) > 0:
+                    try:
+                        from collections import Counter
+                        cnt = Counter(macro_candidates)
+                        most_common = cnt.most_common()
+                        top_freq = most_common[0][1]
+                        top_macros = [m for m, f in most_common if f == top_freq]
+                        try:
+                            top_macros_sorted = sorted(top_macros, key=lambda x: int(str(x).split(".")[0]))
+                            default_macro = top_macros_sorted[0]
+                        except:
+                            default_macro = top_macros[0]
+                    except:
+                        default_macro = macro_candidates[0]
+
+                if default_macro and not str(st.session_state.get("adhoc_macro", "")).strip():
+                    st.session_state["adhoc_macro"] = str(default_macro)
+
+                macro_for_micro = str(st.session_state.get("adhoc_macro", "")).strip() or (str(default_macro).strip() if default_macro else "")
+                if macro_for_micro:
+                    tmp = existing_in_area.copy()
+                    tmp["__micro_num"] = tmp["ID Micro"].apply(lambda x: parse_id(x)[1] if parse_id(x)[0] is not None else None)
+                    tmp["__macro_num_from_micro"] = tmp["ID Micro"].apply(lambda x: parse_id(x)[0])
+
+                    try:
+                        macro_num = int(str(macro_for_micro).split(".")[0])
+                    except:
+                        macro_num = None
+
+                    if macro_num is not None:
+                        tmp_same_macro = tmp[tmp["__macro_num_from_micro"] == macro_num]
+                        existing_micros = tmp_same_macro["__micro_num"].dropna().tolist()
+                        next_micro = int(max(existing_micros)) + 1 if len(existing_micros) > 0 else 1
+                        if not str(st.session_state.get("adhoc_micro", "")).strip():
+                            st.session_state["adhoc_micro"] = f"{macro_num}.{next_micro}"
+
+        id_macro = c2.text_input("ID Macro (e.g., 1, 2, 3)", key="adhoc_macro")
+        id_micro = c3.text_input("ID Micro (e.g., 1.1, 1.2, 2.1)", key="adhoc_micro")
 
         activity = st.text_input("Activity", key="adhoc_activity")
         notes = st.text_area("Notes (optional)", key="adhoc_notes", height=100)
@@ -2049,15 +1875,13 @@ if st.session_state.section == "AdHoc":
                 fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
 
                 next_order = int(fresh["Order"].max() + 1) if len(fresh) > 0 else 0
-
-                # prova parse last_done
                 parsed_last_done = pd.to_datetime(last_done, errors="coerce") if last_done else pd.NaT
 
                 row = {
                     "Area": area,
-                    "ID": adhoc_id,
+                    "ID Macro": id_macro,
+                    "ID Micro": id_micro,
                     "Activity": activity,
-                    "Owner": owner,
                     "Status": status if status in EOM_STATUS_OPTIONS else EOM_WHITE,
                     "Last Done": parsed_last_done,
                     "Notes": notes,
@@ -2067,26 +1891,25 @@ if st.session_state.section == "AdHoc":
                 }
 
                 fresh = pd.concat([fresh, pd.DataFrame([row])], ignore_index=True)
+                fresh = renumber_ids(fresh, "ID Macro", "ID Micro")
+                if "Status" in fresh.columns:
+                    fresh["Status"] = clean_status_series(fresh["Status"])
+
                 if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
                     time.sleep(0.5)
                     st.rerun()
 
     # ======================================================
-    # EDIT MODE (table)
+    # EDIT MODE (table) - sorted + save on change
     # ======================================================
     if st.session_state.adhoc_edit_mode and not st.session_state.adhoc_bulk_delete and len(adhoc_view_df) > 0:
-        adhoc_view_df = adhoc_view_df.sort_values("Order").reset_index(drop=True)
+        adhoc_view_df = sort_by_ids(adhoc_view_df, "ID Macro", "ID Micro", "Order")
 
-        edit_cols = ["Area", "ID", "Activity", "Owner", "Status", "Last Done", "Notes", "Order"]
+        edit_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Status", "Last Done", "Notes", "Order"]
         edit_df = adhoc_view_df[edit_cols].copy()
 
         col_cfg = {
-            "Status": st.column_config.SelectboxColumn(
-                "Status",
-                options=EOM_STATUS_OPTIONS,
-                default=EOM_WHITE,
-                width="small"
-            )
+            "Status": st.column_config.SelectboxColumn("Status", options=EOM_STATUS_OPTIONS, default=EOM_WHITE, width="small")
         }
 
         edited = st.data_editor(
@@ -2099,7 +1922,6 @@ if st.session_state.section == "AdHoc":
             key="adhoc_edit_editor"
         )
 
-        # salva se cambia qualcosa
         if "adhoc_last_saved_state" not in st.session_state:
             st.session_state.adhoc_last_saved_state = edit_df.to_dict("records")
 
@@ -2110,23 +1932,21 @@ if st.session_state.section == "AdHoc":
                 fresh["Order"] = range(len(fresh))
             fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
 
-            # applica modifiche per Order
             for _, r in edited.iterrows():
                 o = int(r["Order"])
                 mask = fresh["Order"] == o
                 if mask.any():
-                    for c in ["Area", "ID", "Activity", "Owner", "Status", "Last Done", "Notes"]:
-                        if c in fresh.columns and c in edited.columns:
-                            # Last Done: prova a convertirlo (se l'editor lo porta come stringa)
-                            if c == "Last Done":
-                                fresh.loc[mask, c] = pd.to_datetime(r[c], errors="coerce")
-                            else:
-                                fresh.loc[mask, c] = r[c]
+                    for c in ["Area", "ID Macro", "ID Micro", "Activity", "Status", "Last Done", "Notes"]:
+                        if c == "Last Done":
+                            fresh.loc[mask, c] = pd.to_datetime(r[c], errors="coerce")
+                        elif c == "Status":
+                            fresh.loc[mask, c] = r[c] if str(r[c]).strip() in EOM_STATUS_OPTIONS else EOM_WHITE
+                        else:
+                            fresh.loc[mask, c] = r[c]
 
-                    # auto: se status diventa 🟢 e Last Done è vuoto -> set now
+                    # auto: se status 🟢 e Last Done vuoto -> now
                     try:
-                        new_status = str(r["Status"]).strip()
-                        if new_status == EOM_GREEN:
+                        if str(r["Status"]).strip() == EOM_GREEN:
                             cur_ld = fresh.loc[mask, "Last Done"].iloc[0]
                             if pd.isna(cur_ld):
                                 fresh.loc[mask, "Last Done"] = pd.Timestamp.now()
@@ -2136,6 +1956,9 @@ if st.session_state.section == "AdHoc":
             fresh["Last Update"] = pd.Timestamp.now()
             fresh = fresh.sort_values("Order").reset_index(drop=True)
             fresh["Order"] = range(len(fresh))
+            fresh = renumber_ids(fresh, "ID Macro", "ID Micro")
+            if "Status" in fresh.columns:
+                fresh["Status"] = clean_status_series(fresh["Status"])
 
             if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
                 st.session_state.adhoc_last_saved_state = current_state
@@ -2145,24 +1968,38 @@ if st.session_state.section == "AdHoc":
         st.divider()
 
     # ======================================================
-    # VIEW MODE (table with quick status edits)
+    # VIEW MODE (table + quick edits) + DESCRIPTION (like EOM)
     # ======================================================
     if not st.session_state.adhoc_edit_mode and not st.session_state.adhoc_bulk_delete and len(adhoc_view_df) > 0:
-        adhoc_view_df = adhoc_view_df.sort_values("Order").reset_index(drop=True)
+        adhoc_view_df = sort_by_ids(adhoc_view_df, "ID Macro", "ID Micro", "Order")
 
-        display_cols = ["Area", "ID", "Activity", "Owner", "Status", "Last Done", "Notes"]
+        display_cols = ["Area", "ID Macro", "ID Micro", "Activity", "Status", "Last Done", "Notes"]
         display_df = adhoc_view_df[display_cols].copy()
 
         column_config = {
-            "Status": st.column_config.SelectboxColumn(
-                "Status",
-                options=EOM_STATUS_OPTIONS,
-                default=EOM_WHITE,
-                width="small"
-            )
+            "Status": st.column_config.SelectboxColumn("Status", options=EOM_STATUS_OPTIONS, default=EOM_WHITE, width="small")
         }
 
         st.markdown("### 📊 Status Table")
+
+        # selector description
+        activity_display_list = []
+        mapping = {}
+        for _, row in adhoc_view_df.iterrows():
+            a = row["Area"]
+            mi = row["ID Micro"]
+            act = row["Activity"]
+            label = f"{a} - {mi} - {act}"
+            activity_display_list.append(label)
+            mapping[label] = act
+
+        selected_display = st.selectbox(
+            "📝 View/Edit Description for:",
+            options=["Select an activity..."] + activity_display_list,
+            index=0,
+            key="adhoc_activity_selector"
+        )
+        selected_activity_name = mapping.get(selected_display, None)
 
         edited = st.data_editor(
             display_df,
@@ -2173,7 +2010,62 @@ if st.session_state.section == "AdHoc":
             key="adhoc_view_editor"
         )
 
-        # salva solo se cambiano Status / Last Done / Notes
+        if selected_activity_name is not None:
+            st.divider()
+            sel = adhoc_view_df[adhoc_view_df["Activity"] == selected_activity_name].head(1)
+            if len(sel) > 0:
+                sel_area = sel["Area"].iloc[0]
+                sel_macro = sel["ID Macro"].iloc[0]
+                sel_micro = sel["ID Micro"].iloc[0]
+
+                st.markdown(f"### 📝 Description for: **{selected_activity_name}**")
+                st.caption(f"📍 {sel_area} - {sel_macro}/{sel_micro}")
+
+                current_description = get_activity_description(selected_activity_name, adhoc_descriptions_df)
+                has_description = len(str(current_description).strip()) > 0
+
+                if st.button("✏️ Edit Description" if not st.session_state.adhoc_description_edit_mode else "👁️ View Description",
+                             key="adhoc_toggle_desc_mode"):
+                    st.session_state.adhoc_description_edit_mode = not st.session_state.adhoc_description_edit_mode
+                    st.rerun()
+
+                st.divider()
+
+                if st.session_state.adhoc_description_edit_mode:
+                    new_description = st.text_area(
+                        "Description",
+                        value=current_description,
+                        height=400,
+                        key="adhoc_desc_editor_main",
+                        help="Write the activity description here. Supports markdown formatting."
+                    )
+
+                    col_save, col_cancel = st.columns(2)
+                    with col_save:
+                        if st.button("💾 Save Description", type="primary", key="adhoc_save_desc_btn", use_container_width=True):
+                            fresh_desc = load_from_gsheet(ADHOC_DESCRIPTIONS_SHEET, ADHOC_DESCRIPTIONS_COLUMNS, date_cols=["Last Update"])
+                            if len(fresh_desc) == 0:
+                                fresh_desc = pd.DataFrame(columns=ADHOC_DESCRIPTIONS_COLUMNS)
+
+                            if save_activity_description(selected_activity_name, new_description, fresh_desc, ADHOC_DESCRIPTIONS_SHEET):
+                                st.success("✅ Description saved successfully!")
+                                st.session_state.adhoc_description_edit_mode = False
+                                time.sleep(0.5)
+                                st.rerun()
+                            else:
+                                st.error("❌ Failed to save description")
+
+                    with col_cancel:
+                        if st.button("❌ Discard Changes", key="adhoc_discard_desc_btn", use_container_width=True):
+                            st.session_state.adhoc_description_edit_mode = False
+                            st.rerun()
+                else:
+                    if has_description:
+                        st.markdown(current_description)
+                    else:
+                        st.info("📝 No description available yet. Click '✏️ Edit' to add one.")
+
+        # quick save (Status / Last Done / Notes)
         changes_detected = False
         for c in ["Status", "Last Done", "Notes"]:
             if c in edited.columns and c in display_df.columns:
@@ -2187,24 +2079,17 @@ if st.session_state.section == "AdHoc":
                 fresh["Order"] = range(len(fresh))
             fresh["Order"] = pd.to_numeric(fresh["Order"], errors="coerce").fillna(0).astype(int)
 
-            # mappa per posizione -> Order
             for idx, r in edited.iterrows():
                 o = int(adhoc_view_df.iloc[idx]["Order"])
                 mask = fresh["Order"] == o
                 if mask.any():
-                    # status
                     if "Status" in r:
                         fresh.loc[mask, "Status"] = r["Status"] if str(r["Status"]).strip() in EOM_STATUS_OPTIONS else EOM_WHITE
-
-                    # notes
                     if "Notes" in r:
                         fresh.loc[mask, "Notes"] = r["Notes"]
-
-                    # last done (parse)
                     if "Last Done" in r:
                         fresh.loc[mask, "Last Done"] = pd.to_datetime(r["Last Done"], errors="coerce")
 
-                    # auto: se status diventa 🟢 e Last Done è vuoto -> set now
                     try:
                         if str(r["Status"]).strip() == EOM_GREEN:
                             cur_ld = fresh.loc[mask, "Last Done"].iloc[0]
@@ -2216,6 +2101,9 @@ if st.session_state.section == "AdHoc":
             fresh["Last Update"] = pd.Timestamp.now()
             fresh = fresh.sort_values("Order").reset_index(drop=True)
             fresh["Order"] = range(len(fresh))
+            fresh = renumber_ids(fresh, "ID Macro", "ID Micro")
+            if "Status" in fresh.columns:
+                fresh["Status"] = clean_status_series(fresh["Status"])
 
             if save_to_gsheet(fresh, ADHOC_SHEET_NAME):
                 time.sleep(0.3)
@@ -2223,12 +2111,11 @@ if st.session_state.section == "AdHoc":
 
         st.divider()
 
-        # metriche (exclude gray)
         total = len(adhoc_full_df)
-        todo_mask = adhoc_full_df["Status"] != EOM_GRAY if "Status" in adhoc_full_df.columns else pd.Series([True]*total)
+        todo_mask = (adhoc_full_df["Status"] != EOM_GRAY) if "Status" in adhoc_full_df.columns else pd.Series([True] * total)
         total_todo = int(todo_mask.sum())
         completed = int(((adhoc_full_df["Status"] == EOM_GREEN) & todo_mask).sum()) if "Status" in adhoc_full_df.columns else 0
-        pct = int((completed/total_todo)*100) if total_todo > 0 else 0
+        pct = int((completed / total_todo) * 100) if total_todo > 0 else 0
 
         st.metric("Overall Progress", f"{completed}/{total_todo}", f"{pct}%")
 
@@ -2237,7 +2124,7 @@ if st.session_state.section == "AdHoc":
 
     st.divider()
     if len(adhoc_full_df) > 0:
-        todo_mask = adhoc_full_df["Status"] != EOM_GRAY if "Status" in adhoc_full_df.columns else pd.Series([True]*len(adhoc_full_df))
+        todo_mask = (adhoc_full_df["Status"] != EOM_GRAY) if "Status" in adhoc_full_df.columns else pd.Series([True] * len(adhoc_full_df))
         total_todo = int(todo_mask.sum())
         completed = int(((adhoc_full_df["Status"] == EOM_GREEN) & todo_mask).sum()) if "Status" in adhoc_full_df.columns else 0
         st.caption(f"📊 Total activities: {len(adhoc_full_df)} | Completed: {completed}/{total_todo}")
